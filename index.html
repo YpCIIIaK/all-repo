@@ -3,20 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Физлаб</title>
-<meta name="description" content="Онлайн-песочница двумерной физики: тела, пружины, шарниры, моторы, сценарии.">
+<title>Физлаб 3D</title>
+<meta name="description" content="Онлайн-песочница трёхмерной физики: тела, пружины, шарниры, моторы, сценарии.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&family=Manrope:wght@500;600;700;800&family=Unbounded:wght@600;700&display=swap">
-<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="src/style.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three/three.module.min.js" } }</script>
 </head>
 <body>
-<canvas id="view" aria-label="Сцена физического моделирования"></canvas>
+<canvas id="view" aria-label="Трёхмерная сцена физического моделирования"></canvas>
+<div id="labels"></div>
 
 <header id="topbar" class="plate">
   <div class="brand">
     <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 3h16"/><path d="M12 3l5 12"/><circle cx="17.6" cy="16.6" r="3.4" fill="currentColor" stroke="none"/><path d="M12 3 7.4 14" opacity=".35" stroke-dasharray="2 2.4"/></svg>
-    <b>Физлаб</b>
+    <b>Физлаб 3D</b>
   </div>
   <button id="sceneName" class="scene-name" title="Сцена — открыть вкладку «Сценарии»">…</button>
   <span class="state-pill">пауза</span>
@@ -54,16 +56,14 @@
 </div>
 <input id="fileInput" type="file" accept=".json,application/json" hidden>
 
-<script src="js/engine/core.js"></script>
-<script src="js/engine/collide.js"></script>
-<script src="js/engine/joints.js"></script>
-<script src="js/engine/world.js"></script>
-<script src="js/data.js"></script>
-<script src="js/serialize.js"></script>
-<script src="js/scenarios.js"></script>
-<script src="js/render.js"></script>
-<script src="js/tools.js"></script>
-<script src="js/ui.js"></script>
-<script src="js/app.js"></script>
+<div id="loading">
+  <div class="load-card">
+    <div class="spinner"></div>
+    <b>Физлаб 3D</b>
+    <p>Загружаем физический движок…</p>
+  </div>
+</div>
+
+<script type="module" src="src/app.js"></script>
 </body>
 </html>
