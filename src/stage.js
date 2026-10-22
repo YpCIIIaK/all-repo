@@ -466,7 +466,7 @@ export class Viewer extends Stage {
 
 /* ------------------------------ миниатюры ------------------------------ */
 
-const THUMB_VER = 'v3';
+const THUMB_VER = 'v4';
 
 export class Thumbnailer {
   constructor(w = 640, h = 480) {

@@ -344,7 +344,7 @@ export function fabric(id) {
       m.sheenColor = lighten(F.hex, 0.25); m.normalScale.set(0.9, 0.9);
     } else {
       Object.assign(m, { roughness: 0.92, sheen: 0.3, sheenRoughness: 0.8, normalMap: weaveTex() });
-      m.sheenColor = lighten(F.hex, 0.2); m.normalScale.set(0.55, 0.55);
+      m.sheenColor = lighten(F.hex, 0.2); m.normalScale.set(0.32, 0.32);
     }
     return m;
   });
