@@ -1,0 +1,22 @@
+# Проверка магазина при каждом пуше. После успешной проверки workflow
+# «Deploy to GitHub Pages» из ветки по умолчанию выкладывает магазин в /mebel/.
+name: Store check
+
+on:
+  push:
+    branches: ["furniture-store"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Синтаксис модулей
+        run: for f in src/*.js; do node --experimental-default-type=module --check "$f"; done
