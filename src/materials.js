@@ -467,3 +467,7 @@ export function glass() {
 export function metalHex(hex, rough = 0.32) {
   return memo('metalhex:' + hex + rough, () => new THREE.MeshStandardMaterial({ color: hex, metalness: hex === '#1d1c1b' ? 0.5 : 1, roughness: hex === '#1d1c1b' ? 0.5 : rough }));
 }
+
+export function mirror() {
+  return memo('mirror', () => new THREE.MeshStandardMaterial({ color: '#f3f7f9', metalness: 1, roughness: 0.04, envMapIntensity: 1.6 }));
+}

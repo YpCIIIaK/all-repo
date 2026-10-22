@@ -27,7 +27,7 @@ const Store = {
 };
 
 const state = {
-  cart: Store.get('cart', []).filter((l) => byId[l.id]),
+  cart: Store.get('cart', []).filter((l) => byId[l.id] || (l.kind === 'cab' && l.p)),
   favs: new Set(Store.get('favs', []).filter((id) => byId[id])),
   planner: Store.get('planner', null),
   pendingAdd: null,
@@ -60,6 +60,13 @@ function thumbImg(p, cfg, view = 'card', cls = 'main', extra = '') {
 function loadThumb(img) {
   if (img.dataset.loading) return;
   img.dataset.loading = '1';
+  if (img.dataset.cab) {
+    const line = state.cart.find((l) => l.key === img.dataset.cab);
+    if (!line) return;
+    Promise.all([import('./cab/model.js'), import('./cab/build3d.js')]).then(([m, b]) => thumbs.get('cabcart:' + line.no, () => b.buildCabinet(m.layout(m.normalize(JSON.parse(JSON.stringify(line.p))))), 'card'))
+      .then((url) => { if (url) { img.onload = () => img.classList.add('ready'); img.src = url; } });
+    return;
+  }
   const p = byId[img.dataset.pid];
   const cfg = JSON.parse(img.dataset.cfg || '{}');
   thumbs.get(cfgKey(p, cfg), () => buildModel(p, cfg), img.dataset.view, !!img.dataset.priority).then((url) => {
@@ -144,7 +151,18 @@ function setQty(key, q) {
 }
 function saveCart(bump) { Store.set('cart', state.cart); renderBadges(bump); renderCart(); if (route.path === '/checkout') route.refresh(); }
 const cartCount = () => state.cart.reduce((s, l) => s + l.qty, 0);
-const cartTotal = () => state.cart.reduce((s, l) => s + priceOf(byId[l.id], l.cfg) * l.qty, 0);
+const linePrice = (l) => (l.kind === 'cab' ? l.price : priceOf(byId[l.id], l.cfg));
+const cartTotal = () => state.cart.reduce((s, l) => s + linePrice(l) * l.qty, 0);
+
+// Изделие из конструктора: проект целиком лежит в позиции корзины.
+function addCustom(item) {
+  const key = 'cab:' + item.no;
+  const line = state.cart.find((l) => l.key === key);
+  if (line) line.qty += 1;
+  else state.cart.push({ key, id: 'cab', kind: 'cab', p: item.p, price: item.price, title: item.title, summary: item.summary, no: item.no, qty: 1 });
+  saveCart(true);
+  toast('Шкаф по вашему проекту в корзине', { href: '#cart', text: 'Открыть корзину' });
+}
 const FREE_FROM = 50000, DELIVERY = 2900;
 
 function renderBadges(bump) {
@@ -156,6 +174,18 @@ function renderBadges(bump) {
 }
 
 function lineHTML(l, { controls = true } = {}) {
+  if (l.kind === 'cab') return `<div class="line-item" data-line="${esc(l.key)}">
+    <a class="li-media" href="#/constructor" data-open-cab="${esc(l.key)}"><img data-cab="${esc(l.key)}" alt=""></a>
+    <div>
+      <div class="li-top"><a class="li-name" href="#/constructor" data-open-cab="${esc(l.key)}">${esc(l.title)}</a>
+        ${controls ? `<button class="li-remove" data-remove aria-label="Удалить">${icon('trash')}</button>` : ''}</div>
+      <div class="li-cfg">${esc(l.summary)} · проект ${esc(l.no)}</div>
+      <div class="li-bottom">
+        ${controls ? `<div class="qty sm"><button data-dec aria-label="Меньше">${icon('minus')}</button><span>${l.qty}</span><button data-inc aria-label="Больше">${icon('plus')}</button></div>` : `<span class="muted">${l.qty} шт.</span>`}
+        <b>${fmt(l.price * l.qty)}</b>
+      </div>
+    </div>
+  </div>`;
   const p = byId[l.id];
   return `<div class="line-item" data-line="${esc(l.key)}">
     <a class="li-media" href="#/p/${p.id}?${new URLSearchParams(l.cfg)}">${thumbImg(p, l.cfg, 'card')}</a>
@@ -185,7 +215,7 @@ function renderCart() {
     <div class="free-bar"><i style="width:${Math.min(100, (total / FREE_FROM) * 100)}%"></i></div>
     <div class="sum-row total"><span>Итого, ${cartCount()} ${plural(cartCount(), 'товар', 'товара', 'товаров')}</span><span>${fmt(total)}</span></div>
     <a class="btn btn-primary btn-block" href="#/checkout" data-close-drawer>Оформить заказ ${icon('arrow')}</a>`;
-  for (const img of $$('img[data-thumb]', body)) loadThumb(img);
+  for (const img of $$('img[data-thumb], img[data-cab]', body)) loadThumb(img);
 }
 
 function openCart(open = true) {
@@ -203,6 +233,8 @@ $('#cartDrawer').addEventListener('click', (e) => {
     else if (e.target.closest('[data-dec]')) setQty(l.key, l.qty - 1);
     else if (e.target.closest('[data-remove]')) setQty(l.key, 0);
   }
+  const oc = e.target.closest('[data-open-cab]');
+  if (oc) { const l = state.cart.find((x) => x.key === oc.dataset.openCab); if (l) { Store.set('cab', l.p); if (route.path === '/constructor') setTimeout(() => route.refresh(), 0); } }
   if (e.target.closest('[data-close-drawer]') || e.target.closest('a')) openCart(false);
 });
 $('#scrim').addEventListener('click', () => openCart(false));
@@ -678,7 +710,7 @@ function pageCheckout(app) {
         <div class="sum-row"><span>${ship() === 'pickup' ? 'Самовывоз' : 'Доставка и сборка'}</span><span>${d ? fmt(d) : 'бесплатно'}</span></div>
         <div class="sum-row total"><span>К оплате при получении</span><span>${fmt(t + d)}</span></div>
       </div>`;
-    for (const img of $$('img[data-thumb]', $('#coSummary'))) loadThumb(img);
+    for (const img of $$('img[data-thumb], img[data-cab]', $('#coSummary'))) loadThumb(img);
   };
   drawSum();
   const date = $('#fDate'), min = new Date(Date.now() + 3 * 864e5);
@@ -918,7 +950,7 @@ async function pageConstructor(app, sub, query) {
   const token = app.dataset.token;
   const mod = await import('./cab/page.js');
   if (app.dataset.token !== token) return;
-  const ctx = { toast, icon, esc, fmt, Store, thumbs, plural };
+  const ctx = { toast, icon, esc, fmt, Store, thumbs, plural, addCustom };
   return sub ? mod.mountProject(app, ctx) : mod.mountConstructor(app, ctx, query);
 }
 

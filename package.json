@@ -1,0 +1,10 @@
+{
+  "name": "yasen-furniture",
+  "private": true,
+  "type": "module",
+  "description": "Ясень — демонстрационный мебельный магазин с 3D-просмотром, планировщиком комнаты и конструктором корпусной мебели",
+  "scripts": {
+    "start": "npx http-server . -p 8080",
+    "test": "node --test"
+  }
+}

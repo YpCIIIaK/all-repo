@@ -19,4 +19,6 @@ jobs:
         with:
           node-version: 22
       - name: Синтаксис модулей
-        run: for f in src/*.js; do node --experimental-default-type=module --check "$f"; done
+        run: for f in src/*.js src/cab/*.js; do node --check "$f"; done
+      - name: Тесты расчётного ядра конструктора
+        run: node --test

@@ -442,6 +442,7 @@ export class Viewer extends Stage {
     if (active || this.dirty) {
       this.render();
       this._placeLabels();
+      this.onRender?.();
       this.dirty = false;
     }
     if (active || this.controls.autoRotate) this.kick();
@@ -466,7 +467,7 @@ export class Viewer extends Stage {
 
 /* ------------------------------ миниатюры ------------------------------ */
 
-const THUMB_VER = 'v5';
+const THUMB_VER = 'v6';
 
 export class Thumbnailer {
   constructor(w = 640, h = 480) {
