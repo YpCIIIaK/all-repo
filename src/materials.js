@@ -434,3 +434,36 @@ export function swatchURL(kind, id) {
   swatchCache.set(key, url);
   return url;
 }
+
+/* ------------------------------ плитные материалы для конструктора ------------------------------ */
+
+// ЛДСП: однотонная, под дерево или под бетон.
+export function board(d) {
+  return memo('board:' + d.hex + (d.wood ? ':w' : '') + (d.concrete ? ':c' : ''), () => {
+    if (d.wood) {
+      const t = woodTex();
+      const m = new THREE.MeshStandardMaterial({ color: d.hex, map: t.map, normalMap: t.normal, roughness: 0.62 });
+      m.normalScale.set(0.12, 0.12);
+      return m;
+    }
+    if (d.concrete) {
+      const map = floorTex('concrete').clone();
+      map.needsUpdate = true;
+      return new THREE.MeshStandardMaterial({ color: '#f4f2ee', map, roughness: 0.82 });
+    }
+    return new THREE.MeshStandardMaterial({ color: d.hex, roughness: 0.58 });
+  });
+}
+
+// МДФ в эмали: ровный полуматовый цвет.
+export function enamel(hex) {
+  return memo('enamel:' + hex, () => new THREE.MeshPhysicalMaterial({ color: hex, roughness: 0.42, clearcoat: 0.25, clearcoatRoughness: 0.5 }));
+}
+
+export function glass() {
+  return memo('glass', () => new THREE.MeshPhysicalMaterial({ color: '#cbd6d3', roughness: 0.06, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }));
+}
+
+export function metalHex(hex, rough = 0.32) {
+  return memo('metalhex:' + hex + rough, () => new THREE.MeshStandardMaterial({ color: hex, metalness: hex === '#1d1c1b' ? 0.5 : 1, roughness: hex === '#1d1c1b' ? 0.5 : rough }));
+}

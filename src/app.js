@@ -310,6 +310,25 @@ function pageHome(app) {
     </div>
   </section>
 
+  <section class="section" style="padding-top:0">
+    <div class="wrap">
+      <div class="band band-light reveal">
+        <div class="band-media"><img id="cabImg" alt="Шкаф, собранный в конструкторе"></div>
+        <div class="band-text">
+          <div class="eyebrow">Конструктор корпусной мебели</div>
+          <h2>Шкаф точно по размеру ниши</h2>
+          <p>Задайте размеры до миллиметра, разбейте шкаф на секции, добавьте полки, штанги и ящики. Производство получит чертежи, спецификацию деталей и карты раскроя.</p>
+          <ul>
+            <li>${icon('check')} Шкафы, купе, стеллажи, комоды, тумбы</li>
+            <li>${icon('check')} Чертежи и спецификация за секунду</li>
+            <li>${icon('check')} Стоимость пересчитывается сразу</li>
+          </ul>
+          <a class="btn btn-primary" href="#/constructor">${icon('layers')} Собрать шкаф</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="section" id="materials">
     <div class="wrap">
       <div class="section-head"><div><div class="eyebrow">Материалы</div><h2 class="section-title">Ткани, дерево и камень</h2>
@@ -360,6 +379,16 @@ function pageHome(app) {
 
   // картинка для блока о планировщике
   thumbs.get('band-room', () => { const r = livingRoom('velvet-emerald'); r.g.rotation.y = -0.5; return r.g; }, 'hero').then((url) => { const im = $('#bandImg'); if (im && url) im.src = url; });
+
+  // картинка для блока о конструкторе
+  Promise.all([import('./cab/model.js'), import('./cab/build3d.js')]).then(([m, b]) => thumbs.get('band-cab', () => {
+    const p = m.fromTemplate('wardrobe');
+    p.body = 'sonoma'; p.front = { kind: 'enamel', id: 'milk' }; p.handle = 'bar192'; p.metal = 'brass';
+    const g = b.buildCabinet(m.layout(p));
+    g.userData.open.set(1);
+    g.rotation.y = 0.25;
+    return g;
+  }, 'card')).then((url) => { const im = $('#cabImg'); if (im && url) im.src = url; });
 
   // материалы
   const matGrid = $('#matGrid');
@@ -882,6 +911,17 @@ async function pagePlanner(app) {
   };
 }
 
+/* ------------------------------ конструктор корпусной мебели ------------------------------ */
+
+async function pageConstructor(app, sub, query) {
+  document.body.classList.add(sub ? 'doc-page' : 'planner-page');
+  const token = app.dataset.token;
+  const mod = await import('./cab/page.js');
+  if (app.dataset.token !== token) return;
+  const ctx = { toast, icon, esc, fmt, Store, thumbs, plural };
+  return sub ? mod.mountProject(app, ctx) : mod.mountConstructor(app, ctx, query);
+}
+
 function pageNotFound(app) {
   app.innerHTML = `<div class="wrap"><div class="empty" style="padding:110px 20px"><h3>Такой страницы нет</h3><p>Возможно, товар сняли с продажи или ссылка устарела.</p><a class="btn btn-primary" href="#/catalog">В каталог</a></div></div>`;
 }
@@ -893,6 +933,7 @@ const ROUTES = [
   [/^\/catalog(?:\/([\w-]+))?$/, pageCatalog],
   [/^\/p\/([\w-]+)$/, pageProduct],
   [/^\/planner$/, pagePlanner],
+  [/^\/constructor(?:\/(project))?$/, pageConstructor],
   [/^\/favorites$/, pageFavorites],
   [/^\/checkout$/, pageCheckout],
 ];
@@ -906,7 +947,7 @@ const route = {
     const query = Object.fromEntries(new URLSearchParams(qs || ''));
     if (typeof this.cleanup === 'function') { try { this.cleanup(); } catch (e) { console.error(e); } }
     this.cleanup = null;
-    document.body.classList.remove('planner-page');
+    document.body.classList.remove('planner-page', 'doc-page');
     const app = $('#app');
     const token = String(++this.token);
     app.dataset.token = token;
@@ -915,7 +956,7 @@ const route = {
     this.path = path;
     $$('.main-nav a').forEach((a) => {
       const n = a.dataset.nav;
-      a.classList.toggle('active', (n === 'catalog' && path === '/catalog') || path === '/catalog/' + n || (n === 'planner' && path === '/planner'));
+      a.classList.toggle('active', (n === 'catalog' && path === '/catalog') || path === '/catalog/' + n || (n === 'planner' && path === '/planner') || (n === 'constructor' && path.startsWith('/constructor')));
     });
     closeMobileNav();
     if ($('#cartDrawer').classList.contains('open')) openCart(false);
@@ -931,7 +972,7 @@ const route = {
     this.cleanup = done;
     hydrate(app);
     if (scroll) setTimeout(() => document.getElementById(scroll)?.scrollIntoView({ behavior: 'smooth' }), 60);
-    document.title = { '/': 'Ясень — мебель в 3D', '/planner': '3D-планировщик · Ясень', '/favorites': 'Избранное · Ясень', '/checkout': 'Оформление · Ясень' }[path]
+    document.title = { '/': 'Ясень — мебель в 3D', '/planner': '3D-планировщик · Ясень', '/favorites': 'Избранное · Ясень', '/checkout': 'Оформление · Ясень', '/constructor': 'Конструктор шкафов · Ясень', '/constructor/project': 'Проект для производства · Ясень' }[path]
       || (path.startsWith('/p/') && byId[args[0]] ? `${byId[args[0]].kind} «${byId[args[0]].name}» · Ясень` : path.startsWith('/catalog') ? `${args[0] ? catName(args[0]) : 'Каталог'} · Ясень` : 'Ясень');
   },
   refresh() { this.go(); },
@@ -999,7 +1040,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 const mobileNav = $('#mobileNav');
-mobileNav.innerHTML = `<a href="#/catalog">Каталог <small>${PRODUCTS.length}</small></a>${CATEGORIES.map((c) => `<a href="#/catalog/${c.id}">${c.name} <small>${PRODUCTS.filter((p) => p.cat === c.id).length}</small></a>`).join('')}<a href="#/planner">3D-планировщик <small>${icon('cube')}</small></a><a href="#/favorites">Избранное</a>`;
+mobileNav.innerHTML = `<a href="#/catalog">Каталог <small>${PRODUCTS.length}</small></a>${CATEGORIES.map((c) => `<a href="#/catalog/${c.id}">${c.name} <small>${PRODUCTS.filter((p) => p.cat === c.id).length}</small></a>`).join('')}<a href="#/planner">3D-планировщик <small>${icon('cube')}</small></a><a href="#/constructor">Конструктор шкафов <small>${icon('layers')}</small></a><a href="#/favorites">Избранное</a>`;
 function closeMobileNav() { mobileNav.hidden = true; document.body.style.overflow = ''; }
 $('#burger').addEventListener('click', () => { mobileNav.hidden = !mobileNav.hidden; document.body.style.overflow = mobileNav.hidden ? '' : 'hidden'; });
 
