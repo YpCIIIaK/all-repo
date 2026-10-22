@@ -6,12 +6,28 @@ import * as THREE from 'three';
 import { Viewer, Stage } from '../stage.js';
 import { swatchURL } from '../materials.js';
 import {
-  fromTemplate, normalize, layout, fitNiche, TEMPLATES, DECORS, ENAMELS, HANDLES, HANDLE_METALS, CELL_KINDS, FRONT_KINDS,
+  fromTemplate, normalize, layout, fitNiche, TEMPLATES, PRESETS, DECORS, ENAMELS, HANDLES, HANDLE_METALS, CELL_KINDS, FRONT_KINDS,
   LIMITS, LOADS, SHEET, FILLER, SCRIBE, THICKNESS,
 } from './model.js';
 import { buildCabinet } from './build3d.js';
 import { partsTable, nest, price, edgeTotals, edgeLabel, partsCSV, drillCSV, materialsOf, massOf } from './spec.js';
 import { frontSVG, sideSVG, sheetSVG, partSVG, holeSummary, nicheSVG } from './drawings.js';
+import { partsDXF } from './dxf.js';
+
+// Манекен 175 см рядом со шкафом — чтобы сразу чувствовать масштаб.
+function mannequin() {
+  const g = new THREE.Group(), mat = new THREE.MeshStandardMaterial({ color: '#d9d0c4', roughness: 0.85 });
+  const part = (geo, x, y, z = 0, rz = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.z = rz; m.castShadow = true; g.add(m); };
+  part(new THREE.SphereGeometry(0.105, 24, 16), 0, 1.64);
+  part(new THREE.CylinderGeometry(0.045, 0.05, 0.08, 16), 0, 1.51);
+  part(new THREE.CapsuleGeometry(0.15, 0.42, 6, 16).scale(1, 1, 0.62), 0, 1.2);
+  for (const s of [-1, 1]) {
+    part(new THREE.CapsuleGeometry(0.058, 0.78, 6, 12), s * 0.085, 0.47);
+    part(new THREE.CapsuleGeometry(0.045, 0.62, 6, 12), s * 0.215, 1.08, 0, s * 0.08);
+  }
+  g.traverse((o) => { o.userData.noBounds = true; o.userData.human = true; });
+  return g;
+}
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -92,7 +108,7 @@ export async function mountConstructor(app, ctx, query) {
   if (!P) { const saved = Store.get('cab', null); try { P = saved ? normalize(saved) : null; } catch { P = null; } }
   if (!P) P = fromTemplate('wardrobe');
 
-  const ui = { step: Store.get('cabStep', 'model'), sec: 0, fronts: true, open: false, dims: false, explode: 0, walls: true };
+  const ui = { step: Store.get('cabStep', 'model'), sec: 0, fronts: true, open: false, dims: false, explode: 0, walls: true, human: false };
   const undo = [], redo = [];
   let C = calc(P), L = C.L;
 
@@ -116,6 +132,8 @@ export async function mountConstructor(app, ctx, query) {
           <button id="cDims" title="Размеры секций и ячеек">${icon('ruler')}<span>Размеры</span></button>
           <button id="cExplode" title="Разнесённый вид — схема сборки">${icon('explode')}<span>Сборка</span></button>
           <button id="cWalls" title="Стены ниши" hidden>${icon('wall')}<span>Ниша</span></button>
+          <button id="cHuman" title="Человек ростом 175 см для масштаба">${icon('person')}<span>Рост</span></button>
+          <button id="cAR" title="Примерить у себя дома в дополненной реальности">${icon('ar')}<span>AR</span></button>
         </div>
         <span class="vhint" id="cHint">${icon('move')} Тяните полки, перегородки и стенки мышью</span>
       </div>
@@ -148,6 +166,7 @@ export async function mountConstructor(app, ctx, query) {
     first = false;
     model.userData.setFronts(ui.fronts);
     if (model.userData.niche) model.userData.niche.visible = ui.walls;
+    if (ui.human) { const h = mannequin(); h.position.set(-(P.W / 2 + (L.niche ? 120 : 0) + 480) * S, 0, 0); model.add(h); }
     if (ui.explode) model.userData.explode.set(ui.explode);
     if (ui.open) { model.userData.open.set(1); viewer.openState = { t: 1, target: 1 }; }
     highlight();
@@ -161,7 +180,7 @@ export async function mountConstructor(app, ctx, query) {
     if (!model) return;
     model.children.filter((c) => c.userData.hl).forEach((c) => { model.remove(c); c.geometry.dispose(); c.material.dispose(); });
     const pk = model.userData.pickers[ui.sec];
-    if (!pk || ui.step !== 'fill' || drag) { viewer.dirty = true; viewer.kick(); return; }
+    if (!pk || ui.step !== 'fill' || drag) { viewer.invalidate(); return; }
     const geo = pk.geometry.clone();
     const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: '#2f4b3d', transparent: true, opacity: 0.08, depthWrite: false }));
     m.position.copy(pk.position);
@@ -172,7 +191,7 @@ export async function mountConstructor(app, ctx, query) {
     e.position.copy(pk.position);
     e.renderOrder = 4;
     model.add(m, e);
-    viewer.dirty = true; viewer.kick();
+    viewer.invalidate();
   }
 
   /* ---------- размеры в 3D: ширины секций и высоты ячеек ---------- */
@@ -246,7 +265,8 @@ export async function mountConstructor(app, ctx, query) {
     body.scrollTop = keep;
     if (ui.step === 'model') for (const img of $$('img[data-tpl]', body)) {
       const id = img.dataset.tpl;
-      thumbs.get('cab2-tpl-' + id, () => buildCabinet(layout(fromTemplate(id))), 'card').then((u) => { if (u) { img.src = u; img.onload = () => img.classList.add('ready'); } });
+      const make = id.startsWith('preset:') ? () => PRESETS[id.slice(7)].make() : () => fromTemplate(id);
+      thumbs.get('cab3-tpl-' + id, () => { const g = buildCabinet(layout(make())); g.userData.niche && (g.userData.niche.visible = false); return g; }, 'card').then((u) => { if (u) { img.src = u; img.onload = () => img.classList.add('ready'); } });
     }
     highlight();
   }
@@ -260,7 +280,11 @@ export async function mountConstructor(app, ctx, query) {
   const opt = (title, right, inner) => `<div class="opt"><div class="opt-head"><b>${title}</b><span>${right}</span></div>${inner}</div>`;
 
   function stepModel() {
-    return `<p class="cab-lead">Выберите основу — дальше её можно изменить как угодно: размеры, секции, полки, ящики, аксессуары и отделку.</p>
+    return `<h3 class="cab-h3">Готовые решения</h3>
+      <div class="tpl-grid presets-grid">${Object.entries(PRESETS).map(([id, t]) => `
+        <button class="tpl" data-preset-pick="${id}"><div class="im"><img data-tpl="preset:${id}" alt=""></div><b>${t.name}</b><span>${t.desc}</span></button>`).join('')}</div>
+      <h3 class="cab-h3">Или начните с основы</h3>
+      <p class="cab-lead">Дальше всё меняется: размеры, секции, полки, ящики, аксессуары и отделка.</p>
       <div class="tpl-grid">${Object.entries(TEMPLATES).map(([id, t]) => `
         <button class="tpl ${P.tpl === id ? 'on' : ''}" data-tpl-pick="${id}"><div class="im"><img data-tpl="${id}" alt=""></div><b>${t.name}</b><span>${t.desc}</span><small>${mm(t.p.W)} × ${mm(t.p.H)} × ${mm(t.p.D)}</small></button>`).join('')}
       </div>`;
@@ -372,7 +396,8 @@ export async function mountConstructor(app, ctx, query) {
       ${opt('Для производства', '', `<ul class="deliver"><li>${icon('doc')}Чертежи: фасад, вид без фасадов, разрезы${L.niche ? ', замер ниши' : ''}</li><li>${icon('grid')}Спецификация: чистовые и пильные размеры, кромка, масса</li><li>${icon('tool')}Деталировка с присадкой: ${L.holesTotal} отверстий с координатами</li><li>${icon('explode')}Схема сборки и порядок монтажа</li><li>${icon('cube')}Карты раскроя листов ${SHEET.L}×${SHEET.W} мм, CSV для станка</li></ul>
         <a class="btn btn-primary btn-block ${L.errors.length ? 'disabled' : ''}" href="#/constructor/project">${icon('doc')} Открыть проект для производства</a>
         <button class="btn btn-ghost btn-block" data-cart style="margin-top:8px" ${L.errors.length ? 'disabled' : ''}>${icon('bag')} Добавить в корзину</button>
-        <div class="row-btns"><button class="btn btn-ghost btn-sm" data-share>${icon('copy')}Ссылка на проект</button><button class="btn btn-ghost btn-sm" data-json>Скачать JSON</button><label class="btn btn-ghost btn-sm">Загрузить<input type="file" accept=".json,application/json" data-import hidden></label></div>`)}`;
+        <button class="btn btn-ghost btn-block" data-room style="margin-top:8px" ${L.errors.length ? 'disabled' : ''}>${icon('room')} Поставить в 3D-планировщик комнаты</button>
+        <div class="row-btns"><button class="btn btn-ghost btn-sm" data-dxf>${icon('grid')}DXF для ЧПУ</button><button class="btn btn-ghost btn-sm" data-share>${icon('copy')}Ссылка на проект</button><button class="btn btn-ghost btn-sm" data-json>Скачать JSON</button><label class="btn btn-ghost btn-sm">Загрузить<input type="file" accept=".json,application/json" data-import hidden></label></div>`)}`;
   }
 
   /* ---------- обработчики панели ---------- */
@@ -426,6 +451,12 @@ export async function mountConstructor(app, ctx, query) {
       ui.sec = 0;
       toast(`Шаблон «${TEMPLATES[d.tplPick].name}»`, { text: 'Вернуть', onClick: () => restore(prev) });
       first = true; scheduleRebuild();
+    } else if (d.presetPick) {
+      const prev = JSON.stringify(P);
+      commit((p) => { const n = PRESETS[d.presetPick].make(); for (const k of Object.keys(p)) delete p[k]; Object.assign(p, n); });
+      ui.sec = 0;
+      toast(`Готовое решение «${PRESETS[d.presetPick].name}»`, { text: 'Вернуть', onClick: () => restore(prev) });
+      first = true; scheduleRebuild();
     } else if (d.nudge) { const inp = $('#' + d.nudge); setDim(d.nudge, +inp.value + +d.d); inp.value = P[DIM[d.nudge]]; }
     else if (d.setInstall) commit((p) => { p.install = d.setInstall; if (d.setInstall === 'niche') { const n = p.niche; if (Math.min(...n.w) < 400) Object.assign(n, { w: [p.W + 100, p.W + 104, p.W + 97] }); } });
     else if (d.setDoors) commit((p) => { p.doors = d.setDoors; });
@@ -440,7 +471,7 @@ export async function mountConstructor(app, ctx, query) {
     });
     else if ('even' in d) commit((p) => { for (const s of p.sections) s.w = 'auto'; });
     else if (d.secauto !== undefined) commit((p) => { const s = p.sections[+d.secauto]; s.w = s.w === 'auto' ? Math.round(L.secW[+d.secauto]) : 'auto'; });
-    else if (d.pick !== undefined) { ui.sec = +d.pick; renderStep(); }
+    else if (d.pick !== undefined) { ui.sec = +d.pick; renderStep(); focusSection(ui.sec); }
     else if (d.front) commit((p) => { p.sections[ui.sec].front = d.front; });
     else if (d.hinge) commit((p) => { p.sections[ui.sec].hinge = d.hinge; });
     else if (d.preset) commit((p) => { p.sections[ui.sec].cells = preset(d.preset); });
@@ -464,6 +495,8 @@ export async function mountConstructor(app, ctx, query) {
     else if (d.handle) commit((p) => { p.handle = d.handle; });
     else if (d.metal) commit((p) => { p.metal = d.metal; });
     else if ('cart' in d) addToCart();
+    else if ('room' in d) ctx.toPlanner(clone(P));
+    else if ('dxf' in d) download(`${projectNo(P)}-cnc.dxf`, partsDXF(C.rows, { title: `${P.name} ${projectNo(P)}` }).text, 'application/dxf');
     else if ('share' in d) {
       const url = location.href.split('#')[0] + '#/constructor?p=' + (await encodeProject(P));
       try { await navigator.clipboard.writeText(url); toast('Ссылка скопирована'); } catch { toast('Скопируйте ссылку из адресной строки'); history.replaceState(null, '', url.slice(url.indexOf('#'))); }
@@ -539,6 +572,7 @@ export async function mountConstructor(app, ctx, query) {
     undo.push(JSON.stringify(P)); redo.length = 0;
     viewer.canvas.setPointerCapture(e.pointerId);
     stage.classList.add('dragging');
+    viewer.interacting(true);
     tip.hidden = true;
   }, true);
 
@@ -610,6 +644,7 @@ export async function mountConstructor(app, ctx, query) {
     if (drag) {
       drag = null;
       stage.classList.remove('dragging');
+      viewer.interacting(false);
       tip.hidden = true;
       save();
       renderStep();
@@ -623,7 +658,7 @@ export async function mountConstructor(app, ctx, query) {
     const hit = hitAt(e);
     let sec = hit?.object.userData.sec;
     if (sec == null) sec = ray.intersectObjects(model.userData.pickers, false)[0]?.object.userData.sec;
-    if (sec != null) { ui.sec = sec; ui.step = 'fill'; renderStep(); $('#cHint').innerHTML = `${icon('move')} Секция ${sec + 1}: настройте наполнение справа`; }
+    if (sec != null) { const changed = sec !== ui.sec || ui.step !== 'fill'; ui.sec = sec; ui.step = 'fill'; renderStep(); if (changed) focusSection(sec); $('#cHint').innerHTML = `${icon('move')} Секция ${sec + 1}: настройте наполнение справа`; }
   };
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
@@ -637,10 +672,20 @@ export async function mountConstructor(app, ctx, query) {
     viewer.goTo(b.dataset.view);
   });
   $('#cOpen').onclick = (e) => { ui.open = viewer.toggleOpen(); e.currentTarget.classList.toggle('on', ui.open); $('span', e.currentTarget).textContent = ui.open ? 'Закрыть' : 'Открыть'; setTimeout(buildDimLabels, 950); };
-  $('#cFronts').onclick = (e) => { ui.fronts = !ui.fronts; model?.userData.setFronts(ui.fronts); viewer.dirty = true; viewer.kick(); e.currentTarget.classList.toggle('on', !ui.fronts); buildDimLabels(); };
-  $('#cDims').onclick = (e) => { ui.dims = !ui.dims; e.currentTarget.classList.toggle('on', ui.dims); buildDimLabels(); viewer.dirty = true; viewer.kick(); };
-  $('#cWalls').onclick = (e) => { ui.walls = !ui.walls; if (model?.userData.niche) model.userData.niche.visible = ui.walls; e.currentTarget.classList.toggle('on', ui.walls); viewer.dirty = true; viewer.kick(); };
+  $('#cFronts').onclick = (e) => { ui.fronts = !ui.fronts; model?.userData.setFronts(ui.fronts); viewer.invalidate(); e.currentTarget.classList.toggle('on', !ui.fronts); buildDimLabels(); };
+  $('#cDims').onclick = (e) => { ui.dims = !ui.dims; e.currentTarget.classList.toggle('on', ui.dims); buildDimLabels(); viewer.invalidate(); };
+  $('#cWalls').onclick = (e) => { ui.walls = !ui.walls; if (model?.userData.niche) model.userData.niche.visible = ui.walls; e.currentTarget.classList.toggle('on', ui.walls); viewer.invalidate(); };
   $('#cWalls').classList.add('on');
+  $('#cHuman').onclick = (e) => { ui.human = !ui.human; e.currentTarget.classList.toggle('on', ui.human); scheduleRebuild(); };
+  // подлёт камеры к выбранной секции
+  function focusSection(i) {
+    const Sx = L.secs[i];
+    if (!Sx || !model) return;
+    const { ox, oz } = model.userData.offset;
+    const c = new THREE.Vector3((Sx.x0 + Sx.cw / 2 + ox) * S, (P.H / 2) * S, (P.D / 2 + oz) * S);
+    const tv = Math.tan(THREE.MathUtils.degToRad(viewer.camera.fov) / 2);
+    viewer.focus(c, Math.max(1.6, ((P.H / 1000) * 0.62) / tv));
+  }
   let exRaf = 0;
   $('#cExplode').onclick = (e) => {
     const target = ui.explode > 0.5 ? 0 : 1;
@@ -651,10 +696,17 @@ export async function mountConstructor(app, ctx, query) {
       const k = Math.min(1, (now - t0) / 700);
       ui.explode = from + (target - from) * k;
       model?.userData.explode.set(ui.explode);
-      viewer.dirty = true; viewer.kick();
+      viewer.invalidate();
       if (k < 1) exRaf = requestAnimationFrame(step); else { viewer.refresh(); buildDimLabels(); }
     };
     exRaf = requestAnimationFrame(step);
+  };
+
+  if (query.ar) import('../ar.js').then(({ arPrompt }) => arPrompt(() => $('#cAR').click(), icon));
+  $('#cAR').onclick = async () => {
+    const [{ openAR }, code] = await Promise.all([import('../ar.js'), encodeProject(P)]);
+    const fresh = buildCabinet(layout(clone(P)));
+    openAR(fresh, { title: cabTitle(P), url: location.href.split('#')[0] + '#/constructor?p=' + code, icon }).catch((e) => { console.error(e); toast('Не удалось запустить примерку'); });
   };
 
   const onKey = (e) => {
@@ -747,6 +799,7 @@ export function mountProject(app, ctx) {
       <button class="btn btn-ghost btn-sm" id="dPrint">${icon('doc')}Печать / PDF</button>
       <button class="btn btn-ghost btn-sm" id="dCsv">${icon('grid')}CSV раскроя</button>
       <button class="btn btn-ghost btn-sm" id="dDrill">${icon('tool')}CSV присадки</button>
+      <button class="btn btn-ghost btn-sm" id="dDxf" title="Контуры деталей и отверстия для ЧПУ">${icon('grid')}DXF для ЧПУ</button>
       <button class="btn btn-ghost btn-sm" id="dJson">JSON</button>
       <button class="btn btn-ghost btn-sm" id="dCart" ${L.errors.length ? 'disabled' : ''}>${icon('bag')}В корзину</button>
       <button class="btn btn-primary btn-sm" id="dSend" ${L.errors.length ? 'disabled' : ''}>${icon('truck')}На производство</button>
@@ -858,6 +911,7 @@ export function mountProject(app, ctx) {
   $('#dPrint').onclick = () => window.print();
   $('#dCsv').onclick = () => download(`${no}-raskroy.csv`, partsCSV(rows), 'text/csv;charset=utf-8');
   $('#dDrill').onclick = () => download(`${no}-prisadka.csv`, drillCSV(rows), 'text/csv;charset=utf-8');
+  $('#dDxf').onclick = () => download(`${no}-cnc.dxf`, partsDXF(rows, { title: `${P.name} ${no}` }).text, 'application/dxf');
   $('#dJson').onclick = () => download(`${no}.json`, JSON.stringify(P, null, 2), 'application/json');
   $('#dCart').onclick = () => ctx.addCustom({ kind: 'cab', p: clone(P), price: pr.total, title: cabTitle(P), summary: cabSummary(P), no });
   const modal = $('#sendModal');

@@ -16,6 +16,8 @@ export function makeRenderer(canvas, { alpha = true, shadows = false, pixelRatio
   r.toneMappingExposure = 0.92;
   r.shadowMap.enabled = shadows;
   r.shadowMap.type = THREE.PCFSoftShadowMap;
+  // тени пересчитываются только когда меняется сцена, а не на каждом кадре вращения
+  r.shadowMap.autoUpdate = false;
   r.setClearColor(0x000000, 0);
   return r;
 }
@@ -28,6 +30,40 @@ export function makeEnvironment(renderer) {
   pm.dispose();
   return env;
 }
+
+/* ------------------------------ панель производительности ------------------------------ */
+
+/**
+ * Включается параметром ?perf в адресе или сочетанием Shift+P.
+ * Показывает частоту кадров, время отрисовки, вызовы отрисовки, треугольники и память GPU.
+ */
+export const perf = {
+  on: false, el: null, frames: [], last: '', msg: '',
+  init() {
+    try { this.on = /[?&]perf\b/.test(location.hash + location.search) || localStorage.getItem('yasen.perf') === '1'; } catch { /* нет доступа */ }
+    addEventListener('keydown', (e) => { if (e.shiftKey && e.code === 'KeyP' && !e.target.closest?.('input, textarea')) this.toggle(); });
+    if (this.on) this.mount();
+  },
+  toggle() { this.on = !this.on; try { localStorage.setItem('yasen.perf', this.on ? '1' : '0'); } catch { /* ничего */ } this.on ? this.mount() : this.el?.remove(); },
+  mount() {
+    if (this.el?.isConnected) return;
+    this.el = document.createElement('div');
+    this.el.className = 'perf-hud';
+    this.el.textContent = 'Производительность: ждём кадр…';
+    document.body.appendChild(this.el);
+  },
+  note(t) { this.msg = t; },
+  frame(renderer, ms, name) {
+    if (!this.on) return;
+    const now = performance.now();
+    this.frames.push(now);
+    while (this.frames.length && now - this.frames[0] > 1000) this.frames.shift();
+    if (now - (this.t || 0) < 250) return;
+    this.t = now;
+    const i = renderer.info, mem = performance.memory ? ` · JS ${Math.round(performance.memory.usedJSHeapSize / 1048576)} МБ` : '';
+    this.el.innerHTML = `<b>${name}</b> · ${this.frames.length} кадр/с · рендер ${ms.toFixed(1)} мс<br>вызовов ${i.render.calls} · треугольников ${(i.render.triangles / 1000).toFixed(1)} тыс.<br>геометрий ${i.memory.geometries} · текстур ${i.memory.textures} · DPR ${renderer.getPixelRatio().toFixed(2)}${mem}${this.msg ? '<br>' + this.msg : ''}`;
+  },
+};
 
 /* ------------------------------ контактная тень ------------------------------ */
 
@@ -158,6 +194,7 @@ export class Stage {
     this.scene.add(this.root);
     this.model = null;
     this.box = new THREE.Box3();
+    this.shadowDirty = true;
   }
 
   setModel(model) {
@@ -185,6 +222,7 @@ export class Stage {
     this.key.target.position.set(c.x, 0, c.z);
     this.key.position.set(c.x - 3, 7, c.z + 4.2);
     this.contact.update(this.renderer, this.scene, b);
+    this.shadowDirty = true;
   }
 
   // Камера так, чтобы модель целиком помещалась в кадр.
@@ -220,7 +258,12 @@ export class Stage {
     this.camera.updateProjectionMatrix();
   }
 
-  render() { this.renderer.render(this.scene, this.camera); }
+  render() {
+    if (this.shadowDirty) { this.renderer.shadowMap.needsUpdate = true; this.shadowDirty = false; }
+    const t0 = performance.now();
+    this.renderer.render(this.scene, this.camera);
+    perf.frame(this.renderer, performance.now() - t0, this.perfName || 'Сцена');
+  }
 
   dispose() {
     if (this.model) disposeObject(this.model);
@@ -248,8 +291,10 @@ export class Viewer extends Stage {
     });
     this.controls.target = this.target;
     this.controls.addEventListener('change', () => this.kick());
-    this.controls.addEventListener('start', () => { this.userMoved = true; this.stopTween(); this.host.classList.add('grabbing'); this.onInteract?.(); });
-    this.controls.addEventListener('end', () => this.host.classList.remove('grabbing'));
+    this.controls.addEventListener('start', () => { this.userMoved = true; this.stopTween(); this.host.classList.add('grabbing'); this.interacting(true); this.onInteract?.(); });
+    this.controls.addEventListener('end', () => { this.host.classList.remove('grabbing'); this.interacting(false); });
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.slowFrames = 0;
     this.dims = null;
     this.labels = document.createElement('div');
     this.labels.className = 'stage-labels';
@@ -276,6 +321,47 @@ export class Viewer extends Stage {
     this.dirty = true;
     this.kick();
   }
+
+  /**
+   * Пока пользователь вращает камеру или тянет деталь, кадр рисуется в пониженном разрешении,
+   * а через 300 мс после остановки — снова в полном. На ретина-экранах это в 2–3 раза меньше пикселей.
+   */
+  interacting(on) {
+    clearTimeout(this.dprTimer);
+    const low = Math.max(1, this.dpr * 0.6);
+    if (on) { if (this.renderer.getPixelRatio() !== low) { this.renderer.setPixelRatio(low); this.dirty = true; } }
+    else this.dprTimer = setTimeout(() => { if (this.disposed) return; this.renderer.setPixelRatio(this.dpr); this.setSize(this.host.clientWidth, this.host.clientHeight); this.dirty = true; this.kick(); }, 300);
+  }
+
+  // Плавно подвести камеру к точке (мир), сохранив направление взгляда.
+  focus(point, dist) {
+    const dir = this.camera.position.clone().sub(this.target).normalize();
+    this.tween = { from: { p: this.camera.position.clone(), t: this.target.clone() }, to: { p: point.clone().addScaledVector(dir, dist ?? this.camera.position.distanceTo(this.target)), t: point.clone() }, k: 0 };
+    this.controls.autoRotate = false;
+    this.kick();
+  }
+
+  /* ---------- метки-пояснения на модели ---------- */
+  // spots: [{ at: [fx, fy, fz] — доля габарита, t: текст }]
+  setSpots(spots) {
+    this.spotEls?.forEach((s) => s.el.remove());
+    this.spotEls = [];
+    if (!spots?.length || !this.model) return;
+    const b = this.box, size = b.getSize(new THREE.Vector3()), c = b.getCenter(new THREE.Vector3());
+    spots.forEach((s, i) => {
+      const pos = new THREE.Vector3(b.min.x + size.x * s.at[0], b.min.y + size.y * s.at[1], b.min.z + size.z * s.at[2]);
+      const el = document.createElement('button');
+      el.className = 'spot';
+      el.innerHTML = `<i>${i + 1}</i><span>${s.t}</span>`;
+      el.addEventListener('click', () => { const on = !el.classList.contains('open'); this.spotEls.forEach((x) => x.el.classList.remove('open')); el.classList.toggle('open', on); });
+      this.labels.appendChild(el);
+      this.spotEls.push({ el, pos, n: pos.clone().sub(c).normalize() });
+    });
+    this.dirty = true; this.kick();
+  }
+
+  // Модель изменилась на месте: перерисовать кадр и тени.
+  invalidate() { this.shadowDirty = true; this.dirty = true; this.kick(); }
 
   setModel(model, { view = '34', keepView = false, pad = 1.12 } = {}) {
     super.setModel(model);
@@ -358,6 +444,7 @@ export class Viewer extends Stage {
       this.key.castShadow = false; this.key.intensity = 1.6;
       this.controls.minAzimuthAngle = -Infinity; this.controls.maxAzimuthAngle = Infinity;
     }
+    this.shadowDirty = true;
     this.dirty = true; this.kick();
   }
 
@@ -402,6 +489,17 @@ export class Viewer extends Stage {
   }
 
   _placeLabels() {
+    if (this.spotEls?.length) {
+      const w = this.host.clientWidth, h = this.host.clientHeight, v = new THREE.Vector3(), toCam = new THREE.Vector3();
+      for (const s of this.spotEls) {
+        v.copy(s.pos).project(this.camera);
+        toCam.copy(this.camera.position).sub(s.pos).normalize();
+        // метка на обратной стороне модели прячется
+        const back = s.n.lengthSq() > 0 && s.n.dot(toCam) < -0.3;
+        s.el.style.transform = `translate(${(v.x * 0.5 + 0.5) * w}px, ${(-v.y * 0.5 + 0.5) * h}px)`;
+        s.el.classList.toggle('back', back);
+      }
+    }
     if (!this.dims) return;
     const w = this.host.clientWidth, h = this.host.clientHeight, v = new THREE.Vector3();
     for (const it of this.dims.items) {
@@ -437,13 +535,18 @@ export class Viewer extends Stage {
       if (Math.abs(os.t - os.target) < 1e-3) os.t = os.target;
       this.model.userData.open.set(os.t);
       if (os.t === os.target) { this.measure(); this.contact.update(this.renderer, this.scene, this.box); }
+      this.shadowDirty = true;
       active = true;
     }
     if (active || this.dirty) {
+      const t0 = performance.now();
       this.render();
       this._placeLabels();
       this.onRender?.();
       this.dirty = false;
+      // слабое устройство: если кадры долго тяжёлые — навсегда снижаем разрешение
+      if (performance.now() - t0 > 34) { if (++this.slowFrames > 40 && this.dpr > 1) { this.dpr = Math.max(1, this.dpr - 0.5); this.slowFrames = 0; perf.note('Разрешение снижено до ' + this.dpr); } }
+      else this.slowFrames = Math.max(0, this.slowFrames - 1);
     }
     if (active || this.controls.autoRotate) this.kick();
     else this.last = 0;
@@ -467,7 +570,7 @@ export class Viewer extends Stage {
 
 /* ------------------------------ миниатюры ------------------------------ */
 
-const THUMB_VER = 'v6';
+const THUMB_VER = 'v7';
 
 export class Thumbnailer {
   constructor(w = 640, h = 480) {

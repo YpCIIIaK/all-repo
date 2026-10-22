@@ -482,5 +482,5 @@ export const MODELS = {
 };
 
 export function disposeObject(obj) {
-  obj.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+  obj.traverse((o) => { if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose(); });
 }

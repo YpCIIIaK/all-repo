@@ -969,3 +969,35 @@ body.doc-page { background: #e9e3da; }
   .doc-shots.three, .assembly, .parts-grid, .draw-pair.one { grid-template-columns: 1fr; }
   .cab-tip { display: none !important; }
 }
+
+.perf-hud {
+  position: fixed; left: 12px; bottom: 12px; z-index: 95; pointer-events: none; padding: 8px 11px; border-radius: 10px;
+  background: #111c; color: #d7f5d0; font: 600 11.5px/1.45 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; backdrop-filter: blur(6px);
+}
+.perf-hud b { color: #fff; }
+
+/* ---------------- AR ---------------- */
+.ar-qr { display: grid; grid-template-columns: 180px 1fr; gap: 18px; align-items: center; margin: 16px 0 6px; font-size: 14px; color: var(--ink-2); }
+.ar-qr .qr { background: #fff; border-radius: 14px; padding: 8px; border: 1px solid var(--line); }
+.ar-qr .qr svg { width: 100%; height: auto; display: block; }
+.ar-qr p { margin: 0 0 8px; }
+.xr-overlay { position: fixed; inset: 0; z-index: 200; pointer-events: none; color: #fff; font: 600 15px var(--sans); }
+.xr-overlay button { pointer-events: auto; background: #1f1c19d9; color: #fff; border-radius: 999px; padding: 12px 18px; font-weight: 700; }
+.xr-top { position: absolute; left: 12px; right: 12px; top: 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px; text-shadow: 0 1px 4px #000; }
+.xr-hint { position: absolute; left: 50%; top: 64px; transform: translateX(-50%); background: #1f1c19b3; padding: 8px 14px; border-radius: 999px; font-size: 13px; text-align: center; width: max-content; max-width: 90vw; }
+.xr-bottom { position: absolute; left: 0; right: 0; bottom: 28px; display: flex; justify-content: center; gap: 12px; }
+@media (max-width: 600px) { .ar-qr { grid-template-columns: 1fr; } .ar-qr .qr { width: 200px; } }
+.try-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.try-row .btn { padding: 0 12px; }
+.ar-prompt { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 92; display: flex; align-items: center; gap: 10px; background: var(--paper); border-radius: 999px; padding: 6px 6px 6px 18px; box-shadow: var(--shadow-l); font-weight: 600; font-size: 14px; width: max-content; max-width: calc(100vw - 24px); }
+@media (max-width: 760px) { .try-row { grid-template-columns: 1fr; } .ar-prompt span { display: none; } }
+.cab-h3 { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 4px 0 10px; font-weight: 700; }
+.presets-grid { margin-bottom: 22px; }
+
+/* ---------------- метки-пояснения ---------------- */
+.stage-labels .spot { position: absolute; left: 0; top: 0; pointer-events: auto; display: flex; align-items: center; gap: 8px; transition: opacity .25s; margin: -14px 0 0 -14px; }
+.spot i { width: 28px; height: 28px; border-radius: 50%; background: #fbf8f3; color: var(--ink); font-style: normal; font-weight: 700; font-size: 12.5px; display: grid; place-items: center; box-shadow: 0 0 0 4px #fbf8f366, 0 4px 14px -4px #0006; transition: transform .2s, background .2s; }
+.spot:hover i, .spot.open i { background: var(--accent); color: #fff; transform: scale(1.08); }
+.spot span { display: none; background: var(--ink); color: var(--paper); font-size: 12.5px; font-weight: 600; padding: 7px 11px; border-radius: 10px; max-width: 230px; text-align: left; line-height: 1.35; box-shadow: var(--shadow-l); }
+.spot:hover span, .spot.open span { display: block; }
+.spot.back { opacity: 0; pointer-events: none; }

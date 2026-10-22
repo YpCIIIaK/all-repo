@@ -8,7 +8,7 @@ import {
   optionValues, swatchesOf, relatedTo, fmt,
 } from './catalog.js';
 import { FABRICS, FABRIC_TYPES, WOODS, STONES, METALS, FLOORS, WALLS, swatchURL } from './materials.js';
-import { Viewer, thumbs } from './stage.js';
+import { Viewer, thumbs, perf } from './stage.js';
 import { disposeObject } from './models.js';
 
 /* ------------------------------ мелочи ------------------------------ */
@@ -536,10 +536,12 @@ function pageProduct(app, id, query) {
           <button data-view="34" class="on">3/4</button><button data-view="front">Спереди</button><button data-view="side">Сбоку</button><button data-view="top">Сверху</button>
         </div>
         <div class="seg icons">
+          ${p.spots ? `<button id="tSpots" class="on" title="Подробности" aria-label="Показать подробности">${icon('info')}</button>` : ''}
           <button id="tDims" title="Размеры" aria-label="Показать размеры">${icon('ruler')}</button>
           <button id="tRoom" title="В интерьере" aria-label="Показать в интерьере">${icon('room')}</button>
           <button id="tRot" class="on" title="Автовращение" aria-label="Автовращение">${icon('rotate')}</button>
           <button id="tShot" title="Сохранить картинку" aria-label="Сохранить картинку">${icon('camera')}</button>
+          <button id="tAR" title="Примерить у себя дома (AR)" aria-label="Примерить в дополненной реальности">${icon('ar')}</button>
           <button id="tFull" title="Во весь экран" aria-label="Во весь экран">${icon('full')}</button>
         </div>
       </div>
@@ -560,7 +562,7 @@ function pageProduct(app, id, query) {
         <button class="btn btn-primary" id="pBuy">${icon('bag')} В корзину</button>
         <button class="fav-big ${state.favs.has(p.id) ? 'on' : ''}" data-fav="${p.id}" aria-label="В избранное">${icon('heart')}</button>
       </div>
-      <button class="btn btn-ghost try-room" id="pTry">${icon('cube')} Примерить в комнате</button>
+      <div class="try-row"><button class="btn btn-ghost" id="pAR">${icon('ar')} Примерить дома в AR</button><button class="btn btn-ghost" id="pTry">${icon('cube')} В 3D-планировщик</button></div>
       <div class="facts">
         <div class="fact">${icon('tool')}<div><b>${isSoft ? 'Изготовим за 4–6 недель' : 'В наличии на складе'}</b><span>${isSoft ? 'Шьём в выбранной ткани под заказ' : 'Отгрузка за 1–2 рабочих дня'}</span></div></div>
         <div class="fact">${icon('truck')}<div><b>Доставка и сборка</b><span id="pDeliv"></span></div></div>
@@ -582,7 +584,7 @@ function pageProduct(app, id, query) {
   const viewer = new Viewer(vEl, { autoRotate: true });
   if (coarse) viewer.canvas.style.touchAction = 'pan-y';
   viewer.onInteract = () => { $('#tRot').classList.remove('on'); };
-  let interior = false;
+  let interior = false, spotsOn = !!p.spots;
 
   const draw = (first) => {
     const price = priceOf(p, cfg), old = oldPriceOf(p, cfg);
@@ -592,6 +594,7 @@ function pageProduct(app, id, query) {
     $('#pDeliv').textContent = price * qty >= FREE_FROM ? 'Бесплатно для этого заказа' : `${fmt(DELIVERY)}, бесплатно от ${fmt(FREE_FROM)}`;
     const model = buildModel(p, cfg);
     viewer.setModel(model, { keepView: !first, view: '34' });
+    viewer.setSpots(spotsOn ? p.spots : null);
     $('.loading', vEl)?.remove();
     const b = viewer.box, s = (v) => Math.round(v * 100);
     $('#pSpec').innerHTML = [['Габариты (Ш × Г × В)', `${s(b.max.x - b.min.x)} × ${s(b.max.z - b.min.z)} × ${s(b.max.y - b.min.y)} см`], ...p.opts.filter((o) => !o.cosmetic).map((o) => [o.label, optionValues(o).find((v) => v.id === cfg[o.key]).label]), ...p.specs]
@@ -617,9 +620,17 @@ function pageProduct(app, id, query) {
     viewer.goTo(b.dataset.view);
     $('#tRot').classList.remove('on');
   });
+  $('#tSpots')?.addEventListener('click', (e) => { spotsOn = !spotsOn; e.currentTarget.classList.toggle('on', spotsOn); viewer.setSpots(spotsOn ? p.spots : null); });
   $('#tDims').addEventListener('click', (e) => { const on = !e.currentTarget.classList.contains('on'); e.currentTarget.classList.toggle('on', on); viewer.showDims(on); });
   $('#tRoom').addEventListener('click', (e) => { interior = !interior; e.currentTarget.classList.toggle('on', interior); viewer.setInterior(interior); });
   $('#tRot').addEventListener('click', (e) => { const on = !e.currentTarget.classList.contains('on'); e.currentTarget.classList.toggle('on', on); viewer.setAutoRotate(on); });
+  const runAR = async () => {
+    const { openAR } = await import('./ar.js');
+    openAR(viewer.model, { title: `${p.kind} «${p.name}»`, url: location.href.replace(/[?&]ar=1/, ''), icon }).catch((e) => { console.error(e); toast('Не удалось запустить примерку'); });
+  };
+  $('#tAR').addEventListener('click', runAR);
+  $('#pAR').addEventListener('click', runAR);
+  if (query.ar) import('./ar.js').then(({ arPrompt }) => arPrompt(runAR, icon));
   $('#tShot').addEventListener('click', () => {
     const a = document.createElement('a');
     a.href = viewer.snapshot(interior ? 'image/jpeg' : 'image/png');
@@ -815,7 +826,7 @@ async function pagePlanner(app) {
   const root = $('#plRoot');
   let sel = null;
   const summary = (s) => {
-    const n = s.items.length, t = s.items.reduce((a, it) => a + priceOf(byId[it.id], it.cfg), 0);
+    const n = s.items.length, t = s.items.reduce((a, it) => a + (it.id === 'cab' ? it.price || 0 : priceOf(byId[it.id], it.cfg)), 0);
     $('#plCount').textContent = n;
     $('#plCountW').textContent = plural(n, 'предмет', 'предмета', 'предметов');
     $('#plTotal').textContent = fmt(t);
@@ -828,16 +839,17 @@ async function pagePlanner(app) {
     const box = $('#plSel');
     if (!d) { box.hidden = true; return; }
     const p = d.product, main = p.opts.find((o) => KIND_OF[o.key] && optionValues(o)[0].hex);
+    const linePriceSel = p.cab ? d.price || 0 : priceOf(p, d.cfg);
     const sws = main ? optionValues(main).slice(0, 9) : [];
     box.hidden = false;
-    box.innerHTML = `<div class="info"><b>${esc(p.kind)} «${esc(p.name)}»</b><span>${fmt(priceOf(p, d.cfg))}</span></div>
+    box.innerHTML = `<div class="info"><b>${esc(p.kind)} «${esc(p.name)}»</b><span>${fmt(linePriceSel)}</span></div>
       ${sws.length ? `<div class="vr"></div><div class="sw-row">${sws.map((v) => `<button class="${swCls(KIND_OF[main.key], v)} ${d.cfg[main.key] === v.id ? 'on' : ''}" style="${swatchStyle(KIND_OF[main.key], v)}" data-k="${main.key}" data-v="${v.id}" title="${esc(v.label)}"></button>`).join('')}</div>` : ''}
       <div class="vr"></div>
       <div class="tools">
         <button class="icon-btn" data-t="rotl" title="Повернуть влево (Q)">${icon('rotl')}</button>
         <button class="icon-btn" data-t="rotr" title="Повернуть вправо (E)">${icon('rotate')}</button>
         <button class="icon-btn" data-t="dup" title="Копия (Ctrl+D)">${icon('copy')}</button>
-        <a class="icon-btn" href="#/p/${p.id}?${new URLSearchParams(d.cfg)}" title="Открыть товар">${icon('arrow')}</a>
+        ${p.cab ? `<a class="icon-btn" href="#/constructor" data-cab-open title="Открыть в конструкторе">${icon('layers')}</a>` : `<a class="icon-btn" href="#/p/${p.id}?${new URLSearchParams(d.cfg)}" title="Открыть товар">${icon('arrow')}</a>`}
         <button class="icon-btn danger" data-t="del" title="Удалить (Delete)">${icon('trash')}</button>
       </div>`;
   };
@@ -852,7 +864,7 @@ async function pagePlanner(app) {
     const { id, cfg } = state.pendingAdd;
     state.pendingAdd = null;
     planner.addItem(id, cfg);
-    toast(`«${byId[id].name}» добавлен в комнату. Перетащите его на место`);
+    toast(`${id === 'cab' ? 'Шкаф из конструктора' : `«${byId[id].name}»`} в комнате. Перетащите на место`);
   }
 
   $('#plList').addEventListener('click', (e) => {
@@ -860,6 +872,7 @@ async function pagePlanner(app) {
     if (b) planner.addItem(b.dataset.add, byId[b.dataset.add].defaults);
   });
   $('#plSel').addEventListener('click', (e) => {
+    if (e.target.closest('[data-cab-open]') && planner.sel) Store.set('cab', planner.sel.d.cfg);
     const t = e.target.closest('[data-t]'), s = e.target.closest('[data-k]');
     if (s) planner.setSelectedCfg({ [s.dataset.k]: s.dataset.v });
     if (!t) return;
@@ -892,7 +905,13 @@ async function pagePlanner(app) {
   $('#plExample').addEventListener('click', () => { planner.load(EXAMPLE_ROOM); state.planner = planner.serialize(); Store.set('planner', state.planner); summary(state.planner); });
   $('#plBuy').addEventListener('click', () => {
     const s = planner.serialize();
-    for (const it of s.items) addToCart(it.id, it.cfg, 1);
+    for (const it of s.items) {
+      if (it.id !== 'cab') { addToCart(it.id, it.cfg, 1); continue; }
+      const P = it.cfg;
+      const key = 'cab:' + JSON.stringify(P).length + ':' + P.W + 'x' + P.H + 'x' + P.D;
+      if (!state.cart.some((l) => l.key === key)) state.cart.push({ key, id: 'cab', kind: 'cab', p: P, price: it.price, title: `${P.name} ${P.W}×${P.H}×${P.D}`, summary: 'Шкаф по проекту из конструктора', no: key.slice(4), qty: 1 });
+      saveCart(true);
+    }
     toast(`${s.items.length} ${plural(s.items.length, 'товар', 'товара', 'товаров')} в корзине`, { href: '#cart', text: 'Открыть' });
   });
 
@@ -950,7 +969,7 @@ async function pageConstructor(app, sub, query) {
   const token = app.dataset.token;
   const mod = await import('./cab/page.js');
   if (app.dataset.token !== token) return;
-  const ctx = { toast, icon, esc, fmt, Store, thumbs, plural, addCustom };
+  const ctx = { toast, icon, esc, fmt, Store, thumbs, plural, addCustom, toPlanner: (P) => { state.pendingAdd = { id: 'cab', cfg: P }; location.hash = '#/planner'; } };
   return sub ? mod.mountProject(app, ctx) : mod.mountConstructor(app, ctx, query);
 }
 
@@ -993,6 +1012,7 @@ const route = {
     closeMobileNav();
     if ($('#cartDrawer').classList.contains('open')) openCart(false);
     if (!searchLayer.hidden) openSearch(false);
+    document.querySelectorAll('.ar-modal, .ar-prompt').forEach((m) => m.remove());
     let fn = pageNotFound, args = [];
     for (const [re, f] of ROUTES) { const m = path.match(re); if (m) { fn = f; args = m.slice(1); break; } }
     const scroll = state.pendingScroll;
@@ -1078,6 +1098,8 @@ $('#burger').addEventListener('click', () => { mobileNav.hidden = !mobileNav.hid
 
 /* ------------------------------ старт ------------------------------ */
 
+perf.init();
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
 renderBadges();
 renderCart();
 route.go();

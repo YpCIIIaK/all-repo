@@ -156,3 +156,26 @@ test('случайные конфигурации не ломают расчёт
     for (const b of L.boxes) assert.ok([b.x, b.y, b.z, b.w, b.h, b.d].every(Number.isFinite), 'NaN в геометрии');
   }
 });
+
+test('готовые решения собираются без ошибок и предупреждений о прочности', async () => {
+  const { PRESETS } = await import('../src/cab/model.js');
+  for (const [id, pr] of Object.entries(PRESETS)) {
+    const { L } = calc(pr.make());
+    assert.deepEqual(L.errors, [], id);
+    assert.ok(!L.warns.some((w) => w.includes('прогнётся')), `${id}: ${L.warns.join('; ')}`);
+  }
+});
+
+test('DXF: валидная структура, контур и отверстия каждой детали', async () => {
+  const { partsDXF } = await import('../src/cab/dxf.js');
+  const { rows } = calc(fromTemplate('wardrobe'));
+  const { text, parts } = partsDXF(rows, { title: 'Тест' });
+  assert.equal(parts, rows.length);
+  const lines = text.split('\r\n');
+  assert.equal(lines.length % 2, 1, 'пары «код — значение»');
+  assert.ok(text.startsWith('0\r\nSECTION') && text.trimEnd().endsWith('EOF'));
+  const circles = (text.match(/\r\nCIRCLE\r\n/g) || []).length;
+  const faceHoles = rows.reduce((a, r) => a + r.holes.filter((h) => h.face === 'A' || h.face === 'B').length, 0);
+  assert.equal(circles, faceHoles);
+  assert.ok(!/[^\x00-\x7f]/.test(text), 'только ASCII');
+});

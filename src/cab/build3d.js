@@ -9,8 +9,27 @@ import { DECORS, ENAMELS, HANDLE_METALS, HANDLES } from './model.js';
 
 const S = 0.001;
 
+/*
+ * Кэш геометрии панелей: при перетаскивании полки меняются 2–3 детали, остальные
+ * берутся готовыми. Геометрии общие (userData.shared), вытесняются по старшинству.
+ */
+const geoCache = new Map();
+const GEO_LIMIT = 800;
+export const geoStats = { hit: 0, miss: 0 };
+function panelGeometry(w, h, d, r) {
+  const key = `${w.toFixed(1)}|${h.toFixed(1)}|${d.toFixed(1)}|${r.toFixed(2)}`;
+  let g = geoCache.get(key);
+  if (g) { geoStats.hit++; geoCache.delete(key); geoCache.set(key, g); return g; }
+  geoStats.miss++;
+  g = finalize(softBox(w * S, h * S, d * S, r * S, { round: 2 }));
+  g.userData.shared = true;
+  geoCache.set(key, g);
+  if (geoCache.size > GEO_LIMIT) { const [k0, g0] = geoCache.entries().next().value; geoCache.delete(k0); g0.dispose(); }
+  return g;
+}
+
 function box(w, h, d, mat, r = 1.2) {
-  const m = new THREE.Mesh(finalize(softBox(w * S, h * S, d * S, Math.max(0.2, Math.min(r, w / 2 - 0.1, h / 2 - 0.1, d / 2 - 0.1)) * S, { round: 2 })), mat);
+  const m = new THREE.Mesh(panelGeometry(w, h, d, Math.max(0.2, Math.min(r, w / 2 - 0.1, h / 2 - 0.1, d / 2 - 0.1))), mat);
   m.castShadow = m.receiveShadow = true;
   return m;
 }

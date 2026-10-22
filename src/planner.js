@@ -4,10 +4,19 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/three/addons/OrbitControls.js';
-import { makeRenderer, makeEnvironment } from './stage.js';
+import { makeRenderer, makeEnvironment, perf } from './stage.js';
 import { disposeObject } from './models.js';
 import { byId, buildModel, normalizeCfg } from './catalog.js';
 import * as M from './materials.js';
+import { layout as cabLayout, normalize as cabNormalize } from './cab/model.js';
+import { buildCabinet } from './cab/build3d.js';
+import { partsTable, price as cabPrice } from './cab/spec.js';
+
+// Шкаф из конструктора: в cfg лежит весь проект, модель и цена считаются здесь же.
+const isCab = (id) => id === 'cab';
+function cabProduct(P) {
+  return { id: 'cab', cab: true, name: `${P.name} ${P.W}×${P.H}`, kind: 'Шкаф по проекту', opts: [] };
+}
 
 const WALL_H = 2.7, WALL_T = 0.12, SNAP = 0.05;
 let uidSeq = 1;
@@ -54,6 +63,10 @@ export class Planner {
     });
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
     this.controls.addEventListener('change', () => this.kick());
+    // во время вращения камеры — пониженное разрешение
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.controls.addEventListener('start', () => { clearTimeout(this.dprT); this.renderer.setPixelRatio(Math.max(1, this.dpr * 0.6)); });
+    this.controls.addEventListener('end', () => { this.dprT = setTimeout(() => { if (!this.disposed) { this.renderer.setPixelRatio(this.dpr); this.resize(); } }, 300); });
 
     this.state = { room: { w: 5, l: 4, floor: 'oak-light', wall: 'chalk' }, items: [] };
     this.view = '3d';
@@ -81,7 +94,7 @@ export class Planner {
     this.items.clear();
     this.state = { room: { ...this.state.room, ...(state?.room || {}) }, items: [] };
     this.buildRoom();
-    for (const it of state?.items || []) if (byId[it.id]) this._addItem({ ...it, uid: uidSeq++ });
+    for (const it of state?.items || []) if (byId[it.id] || (isCab(it.id) && it.cfg)) this._addItem({ ...it, uid: uidSeq++ });
     this.select(null);
     this.home(true);
     this.kick();
@@ -90,7 +103,7 @@ export class Planner {
   serialize() {
     return {
       room: { ...this.state.room },
-      items: [...this.items.values()].map(({ d }) => ({ id: d.id, cfg: d.cfg, x: +d.x.toFixed(3), z: +d.z.toFixed(3), rot: +d.rot.toFixed(4) })),
+      items: [...this.items.values()].map(({ d }) => ({ id: d.id, cfg: d.cfg, x: +d.x.toFixed(3), z: +d.z.toFixed(3), rot: +d.rot.toFixed(4), ...(d.price ? { price: d.price } : {}) })),
     };
   }
 
@@ -162,16 +175,17 @@ export class Planner {
     this.sun.position.set(-w / 2 - 4, 6, 1.5);
     this.sun.target.position.set(0, 0, 0);
     this._applyLighting();
+    this.shadowDirty = true;
     this.kick();
   }
 
   /* ------------------------------ предметы ------------------------------ */
 
   addItem(id, cfg, at) {
-    const p = byId[id];
+    const p = isCab(id) ? cabProduct(cfg) : byId[id];
     if (!p) return null;
     const { w, l } = this.state.room;
-    const d = { uid: uidSeq++, id, cfg: normalizeCfg(p, cfg), x: at?.x ?? 0, z: at?.z ?? 0, rot: at?.rot ?? 0 };
+    const d = { uid: uidSeq++, id, cfg: isCab(id) ? cabNormalize(JSON.parse(JSON.stringify(cfg))) : normalizeCfg(p, cfg), x: at?.x ?? 0, z: at?.z ?? 0, rot: at?.rot ?? 0 };
     const it = this._addItem(d);
     if (!at) {
       // ищем свободное место по спирали от центра
@@ -189,8 +203,16 @@ export class Planner {
   }
 
   _addItem(d) {
-    const p = byId[d.id];
-    const model = buildModel(p, d.cfg);
+    let p, model;
+    if (isCab(d.id)) {
+      const L = cabLayout(cabNormalize(d.cfg));
+      p = cabProduct(d.cfg);
+      model = buildCabinet(L);
+      d.price = cabPrice(L, partsTable(L)).total;
+    } else {
+      p = byId[d.id];
+      model = buildModel(p, d.cfg);
+    }
     if (this.evening) model.userData.light?.set(true);
     const box = new THREE.Box3().setFromObject(model);
     const cx = (box.min.x + box.max.x) / 2, cz = (box.min.z + box.max.z) / 2;
@@ -208,6 +230,7 @@ export class Planner {
   _sync(it) {
     it.g.position.set(it.d.x, it.flat ? 0 : 0.0005, it.d.z);
     it.g.rotation.y = it.d.rot;
+    this.shadowDirty = true;
     this.kick();
   }
 
@@ -262,6 +285,7 @@ export class Planner {
     if (!it) return;
     this.itemsG.remove(it.g); disposeObject(it.g);
     this.items.delete(it.d.uid);
+    this.shadowDirty = true;
     this.select(null);
     this._changed();
   }
@@ -285,7 +309,7 @@ export class Planner {
 
   setSelectedCfg(cfg) {
     const it = this.sel;
-    if (!it) return;
+    if (!it || it.p.cab) return;
     const d = { ...it.d, cfg: normalizeCfg(it.p, { ...it.d.cfg, ...cfg }) };
     this.itemsG.remove(it.g); disposeObject(it.g);
     this.items.delete(it.d.uid);
@@ -460,6 +484,7 @@ export class Planner {
     this.scene.environmentIntensity = ev ? 0.14 : 0.65;
     const bg = ev ? '#2b2a2c' : '#e9e3da';
     this.scene.background.set(bg);
+    this.shadowDirty = true;
     this.kick();
   }
 
@@ -497,7 +522,10 @@ export class Planner {
     if (this.controls.update(dt)) active = true;
     if (active || this.dirty) {
       this._hideWalls();
+      if (this.shadowDirty) { this.renderer.shadowMap.needsUpdate = true; this.shadowDirty = false; }
+      const t0 = performance.now();
       this.renderer.render(this.scene, this.camera);
+      perf.frame(this.renderer, performance.now() - t0, 'Планировщик');
       this._placeLabels();
       this.dirty = false;
     }

@@ -525,3 +525,46 @@ function handleFor(out, p, key, x0, x1, y0, y1, z, kind, side, upper) {
     else out.handles.push({ grp: key, kind: p.handle, x: cx, y: cy, z, orient: 'v' });
   }
 }
+
+/* ------------------------------ готовые решения ------------------------------ */
+
+// Полные проекты с отделкой — как витрина возможностей конструктора.
+export const PRESETS = {
+  bedroom: {
+    name: 'Спальня в орехе', desc: 'Купе 2,4 м: зеркала, обувница, ящики',
+    make() {
+      const p = fromTemplate('coupe');
+      Object.assign(p, { name: 'Шкаф-купе в спальню', W: 2400, H: 2500, th: 18, body: 'walnut', front: { kind: 'decor', id: 'walnut' }, slideFill: ['mirror', 'panel', 'mirror'] });
+      return normalize(p);
+    },
+  },
+  library: {
+    name: 'Книжная стена', desc: 'Стеллаж 2,4 × 2,4 м из плиты 18 мм',
+    make() {
+      const p = fromTemplate('rack');
+      const col = () => ({ w: 'auto', front: 'open', hinge: 'auto', cells: [{ k: 'box', h: 'auto' }, { k: 'box', h: 'auto' }, { k: 'box', h: 'auto' }, { k: 'box', h: 'auto' }, { k: 'box', h: 'auto' }, { k: 'box', h: 'auto' }] });
+      Object.assign(p, { name: 'Книжная стена', W: 2400, H: 2400, D: 320, th: 18, body: 'graphite', front: { kind: 'decor', id: 'graphite' }, load: 'books',
+        sections: [col(), { ...col(), front: 'door', cells: [{ k: 'box', h: 'auto' }, { k: 'box', h: 'auto' }, { k: 'box', h: 'auto' }, { k: 'box', h: 'auto' }] }, col(), col()] });
+      return normalize(p);
+    },
+  },
+  hall: {
+    name: 'Прихожая в нишу', desc: 'По замеру, с доборами и обувницей',
+    make() {
+      const p = fromTemplate('hallway');
+      Object.assign(p, { name: 'Прихожая в нишу', install: 'niche', body: 'sonoma', front: { kind: 'enamel', id: 'terra' }, handle: 'bar192', metal: 'brass',
+        niche: { w: [1904, 1910, 1898], h: [2532, 2528, 2536], d: 680, gap: 5, fillers: 'sides', skirting: { h: 60, d: 15 } } });
+      p.sections[0].cells = [{ k: 'shoes', h: 380 }, { k: 'box', h: 'auto' }, { k: 'box', h: 'auto' }, { k: 'box', h: 'auto' }, { k: 'box', h: 434 }];
+      return normalize(p);
+    },
+  },
+  kids: {
+    name: 'Детская', desc: 'Невысокий шкаф на ножках с кнопками',
+    make() {
+      const p = fromTemplate('wardrobe');
+      Object.assign(p, { name: 'Шкаф в детскую', W: 1200, H: 1800, D: 500, base: 'legs', baseH: 120, body: 'cashmere', front: { kind: 'enamel', id: 'sage' }, handle: 'knob', metal: 'brass',
+        sections: [{ w: 'auto', front: 'door', hinge: 'auto', cells: [{ k: 'basket', h: 200 }, { k: 'box', h: 'auto' }, { k: 'box', h: 'auto' }, { k: 'box', h: 'auto' }] }, { w: 'auto', front: 'door', hinge: 'auto', cells: [{ k: 'drawer', h: 180 }, { k: 'drawer', h: 180 }, { k: 'rail', h: 'auto' }] }] });
+      return normalize(p);
+    },
+  },
+};
