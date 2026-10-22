@@ -1,9 +1,14 @@
-# Публикация Физлаба на GitHub Pages при каждом пуше в ветку по умолчанию.
+# Публикация на GitHub Pages.
+# Корень сайта — Физлаб из ветки по умолчанию, /mebel/ — магазин «Ясень» из ветки furniture-store.
+# Пуш в furniture-store запускает «Store check», а после его успеха — этот workflow.
 name: Deploy to GitHub Pages
 
 on:
   push:
     branches: ["claude/cool-thompson-web5fr", "main"]
+  workflow_run:
+    workflows: ["Store check"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -17,12 +22,19 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Магазин из ветки furniture-store
+        uses: actions/checkout@v4
+        with:
+          ref: furniture-store
+          path: mebel
+      - run: rm -rf mebel/.git mebel/.github
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
