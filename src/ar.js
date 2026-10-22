@@ -12,6 +12,9 @@ export const canQuickLook = () => { try { return document.createElement('a').rel
 export async function canWebXR() {
   try { return !!navigator.xr && await navigator.xr.isSessionSupported('immersive-ar'); } catch { return false; }
 }
+// Проверяем поддержку заранее, при загрузке модуля: по нажатию кнопки на это уже не будет времени.
+let xrSupport = null;
+canWebXR().then((v) => { xrSupport = v; });
 
 /* ------------------------------ подготовка модели к экспорту ------------------------------ */
 
@@ -80,6 +83,10 @@ async function quickLook(object, title) {
 
 /* ------------------------------ WebXR: пол, прицел, касание — поставить ------------------------------ */
 
+/*
+ * Браузер разрешает включить камеру только сразу после касания. Поэтому сессия
+ * запрашивается первой, до подготовки модели и сцены.
+ */
 async function webXR(object, title) {
   const overlay = document.createElement('div');
   overlay.className = 'xr-overlay';
@@ -88,7 +95,15 @@ async function webXR(object, title) {
     <div class="xr-bottom"><button data-x="rotl">↺ 45°</button><button data-x="rotr">↻ 45°</button></div>`;
   document.body.appendChild(overlay);
   overlay.addEventListener('beforexrselect', (e) => { if (e.target.closest('button')) e.preventDefault(); });
+  let session;
+  try {
+    session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'], domOverlay: { root: overlay } });
+  } catch (e) { overlay.remove(); throw e; }
+  try { await runSession(session, overlay, object); }
+  catch (e) { try { await session.end(); } catch { /* уже закрыта */ } overlay.remove(); throw e; }
+}
 
+async function runSession(session, overlay, object) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);
@@ -107,7 +122,6 @@ async function webXR(object, title) {
   reticle.matrixAutoUpdate = false; reticle.visible = false;
   scene.add(reticle);
 
-  const session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'], domOverlay: { root: overlay } });
   renderer.xr.setReferenceSpaceType('local');
   await renderer.xr.setSession(session);
   const hitSource = await session.requestHitTestSource({ space: await session.requestReferenceSpace('viewer') });
@@ -149,21 +163,34 @@ async function qrSVG(text) {
   return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
 }
 
-async function fallbackModal(object, { title, url, icon, mobile }) {
+const ARCORE = 'https://play.google.com/store/apps/details?id=com.google.ar.core';
+const UA = navigator.userAgent;
+const android = /android/i.test(UA);
+// у Redmi по умолчанию Mi Browser, у Samsung — свой: WebXR там нет, только в Chrome
+const realChrome = /Chrome\/\d/.test(UA) && !/MiuiBrowser|XiaoMi|EdgA|OPR|SamsungBrowser|YaBrowser|Firefox|UCBrowser|HeyTap|; wv\)/i.test(UA);
+const inChrome = (u) => `intent://${u.replace(/^https?:\/\//, '')}#Intent;scheme=https;package=com.android.chrome;end`;
+
+async function fallbackModal(object, { title, url, icon, mobile, reason }) {
+  if (typeof url === 'function') url = await url();
+  const arUrl = url + (url.includes('?') ? '&' : '?') + 'ar=1';
   const wrap = document.createElement('div');
   wrap.className = 'modal ar-modal';
   wrap.innerHTML = `<div class="modal-card">
     <button class="icon-btn modal-x" data-close aria-label="Закрыть">${icon('close')}</button>
     <div class="eyebrow">Примерка дома</div><h2>Поставьте у себя в комнате</h2>
-    ${mobile ? '<p class="muted">Этот браузер не поддерживает дополненную реальность. Скачайте модель — её откроет приложение «Файлы» или любой 3D-просмотрщик.</p>'
+    ${mobile ? (android ? `<p>Для примерки на Android нужны браузер <b>Chrome</b> и приложение <b>«Сервисы Google Play для AR»</b> (ARCore). Если сайт открыт в другом браузере, откройте его в Chrome.</p>
+      ${realChrome ? '' : `<p><a class="btn btn-primary btn-sm" href="${inChrome(arUrl)}">Открыть в Chrome</a></p>`}
+      <p><a class="btn ${realChrome ? 'btn-primary' : 'btn-ghost'} btn-sm" href="${ARCORE}" target="_blank" rel="noopener">Установить «Сервисы Google Play для AR»</a></p>
+      <p class="muted">Без AR модель всё равно можно скачать и открыть в любом 3D-просмотрщике.</p>` : '<p class="muted">Этот браузер не поддерживает дополненную реальность. Скачайте модель — её откроет приложение «Файлы» или любой 3D-просмотрщик.</p>')
       : `<div class="ar-qr"><div class="qr" id="arQr"></div><div><p>Наведите камеру телефона на код. На iPhone модель откроется в AR Quick Look, на Android — в браузере с камерой: поставьте её на пол в натуральную величину.</p><p class="muted">Модель строится прямо в браузере телефона — ничего устанавливать не нужно.</p></div></div>`}
     <div class="row-btns"><button class="btn btn-ghost btn-sm" data-dl="glb">${icon('cube')} Скачать GLB</button><button class="btn btn-ghost btn-sm" data-dl="usdz">${icon('cube')} Скачать USDZ</button></div>
     <p class="fine">GLB подходит для Blender, SketchUp и веб-просмотрщиков, USDZ — для устройств Apple. Размеры — в метрах, 1:1.</p>
+    ${reason ? `<p class="fine">Техническая причина: ${String(reason.name || '')} ${String(reason.message || reason).replace(/[<>&]/g, '')}</p>` : ''}
   </div>`;
   document.body.appendChild(wrap);
   const esc = (e) => { if (e.key === 'Escape') { wrap.remove(); removeEventListener('keydown', esc); } };
   addEventListener('keydown', esc);
-  if (!mobile) $q(wrap, '#arQr').innerHTML = await qrSVG(url + (url.includes('?') ? '&' : '?') + 'ar=1');
+  if (!mobile) $q(wrap, '#arQr').innerHTML = await qrSVG(arUrl);
   wrap.addEventListener('click', async (e) => {
     if (e.target === wrap || e.target.closest('[data-close]')) { wrap.remove(); return; }
     const dl = e.target.closest('[data-dl]')?.dataset.dl;
@@ -181,8 +208,14 @@ const slug = (s) => s.toLowerCase().replace(/[^a-zа-яё0-9]+/gi, '-').replace(
  */
 export async function openAR(object, { title = 'Мебель', url = location.href, icon = () => '' } = {}) {
   const mobile = matchMedia('(pointer: coarse)').matches;
-  if (canQuickLook()) return quickLook(object, title);
-  if (await canWebXR()) return webXR(object, title);
+  try {
+    if (canQuickLook()) return await quickLook(object, title);
+    if (xrSupport ?? await canWebXR()) return await webXR(object, title);
+  } catch (e) {
+    // не вышло — показываем запасной путь и причину, а не просто ошибку
+    console.warn('AR:', e);
+    return fallbackModal(object, { title, url, icon, mobile, reason: e });
+  }
   return fallbackModal(object, { title, url, icon, mobile });
 }
 

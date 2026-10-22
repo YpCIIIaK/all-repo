@@ -624,8 +624,9 @@ function pageProduct(app, id, query) {
   $('#tDims').addEventListener('click', (e) => { const on = !e.currentTarget.classList.contains('on'); e.currentTarget.classList.toggle('on', on); viewer.showDims(on); });
   $('#tRoom').addEventListener('click', (e) => { interior = !interior; e.currentTarget.classList.toggle('on', interior); viewer.setInterior(interior); });
   $('#tRot').addEventListener('click', (e) => { const on = !e.currentTarget.classList.contains('on'); e.currentTarget.classList.toggle('on', on); viewer.setAutoRotate(on); });
+  const arMod = import('./ar.js');   // заранее: по касанию модуль должен быть готов
   const runAR = async () => {
-    const { openAR } = await import('./ar.js');
+    const { openAR } = await arMod;
     openAR(viewer.model, { title: `${p.kind} «${p.name}»`, url: location.href.replace(/[?&]ar=1/, ''), icon }).catch((e) => { console.error(e); toast('Не удалось запустить примерку'); });
   };
   $('#tAR').addEventListener('click', runAR);

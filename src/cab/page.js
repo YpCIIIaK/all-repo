@@ -703,10 +703,12 @@ export async function mountConstructor(app, ctx, query) {
   };
 
   if (query.ar) import('../ar.js').then(({ arPrompt }) => arPrompt(() => $('#cAR').click(), icon));
+  const arMod = import('../ar.js');   // заранее: по касанию модуль должен быть готов
   $('#cAR').onclick = async () => {
-    const [{ openAR }, code] = await Promise.all([import('../ar.js'), encodeProject(P)]);
+    const { openAR } = await arMod;
     const fresh = buildCabinet(layout(clone(P)));
-    openAR(fresh, { title: cabTitle(P), url: location.href.split('#')[0] + '#/constructor?p=' + code, icon }).catch((e) => { console.error(e); toast('Не удалось запустить примерку'); });
+    const snap = clone(P);
+    openAR(fresh, { title: cabTitle(P), url: async () => location.href.split('#')[0] + '#/constructor?p=' + (await encodeProject(snap)), icon }).catch((e) => { console.error(e); toast('Не удалось запустить примерку'); });
   };
 
   const onKey = (e) => {
