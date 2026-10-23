@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Fancy Cursor</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>Fancy Cursor</h1>
+    <label class="switch"><input type="checkbox" id="enabled"><span></span></label>
+  </header>
+
+  <section>
+    <div class="label">Стиль</div>
+    <div class="seg" id="style">
+      <button data-v="ring">Кольцо</button>
+      <button data-v="dot">Точка</button>
+      <button data-v="blend">Инверсия</button>
+    </div>
+  </section>
+
+  <section class="row">
+    <label for="color">Цвет</label>
+    <input type="color" id="color">
+  </section>
+
+  <section>
+    <div class="row"><label for="size">Размер</label><output id="sizeOut"></output></div>
+    <input type="range" id="size" min="16" max="60" step="2">
+  </section>
+
+  <section>
+    <div class="row"><label for="lag">Плавность</label><output id="lagOut"></output></div>
+    <input type="range" id="lag" min="0.06" max="1" step="0.02">
+  </section>
+
+  <section class="row">
+    <label for="ripple">Волна при клике</label>
+    <input type="checkbox" id="ripple">
+  </section>
+
+  <section class="row">
+    <label for="magnetic">Магнит к кнопкам</label>
+    <input type="checkbox" id="magnetic">
+  </section>
+
+  <button id="reset" class="reset">Сбросить</button>
+
+  <script src="settings.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
