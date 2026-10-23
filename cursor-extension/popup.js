@@ -13,7 +13,6 @@ function render(s) {
   $('lagOut').textContent = s.lag >= 1 ? 'без задержки' : Math.round((1 - s.lag) * 100) + '%';
   $('ripple').checked = s.ripple;
   $('magnetic').checked = s.magnetic;
-  $('tilt').checked = s.tilt;
   for (const b of $('style').children) b.classList.toggle('on', b.dataset.v === s.style);
   for (const b of $('mode').children) b.classList.toggle('on', b.dataset.v === s.mode);
 }
@@ -33,7 +32,6 @@ $('size').addEventListener('input', e => set({ size: +e.target.value }));
 $('lag').addEventListener('input', e => set({ lag: +e.target.value }));
 $('ripple').addEventListener('change', e => set({ ripple: e.target.checked }));
 $('magnetic').addEventListener('change', e => set({ magnetic: e.target.checked }));
-$('tilt').addEventListener('change', e => set({ tilt: e.target.checked }));
 $('mode').addEventListener('click', e => {
   if (e.target.dataset.v) set({ mode: e.target.dataset.v });
 });

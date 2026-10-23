@@ -16,7 +16,6 @@
   let seen = false, running = false;
   let linkEl = null;
   let vx = 0, vy = 0;         // сглаженная скорость — для наклона курсора
-  let tiltEl = null, tiltOrig = '';
   let hand, lastMx = -100;
   let hAng = 0, hVel = 0;     // наклон пальца и его скорость — пружина
   // Картинка стандартной руки; кончик пальца — точка клика
@@ -24,7 +23,6 @@
   let hiddenEl = null, hiddenVal = '', hiddenPrio = '';  // элемент, у которого спрятан системный курсор
   let overEl = null;          // самый глубокий элемент под мышью
   let linkRect = null;        // размеры текущей кнопки (кэш, сбрасывается при прокрутке)
-  let lastTilt = '';
   const cls = {};             // текущие классы #fc-root — чтобы не трогать DOM без нужды
 
   function build() {
@@ -82,13 +80,11 @@
     root.style.setProperty('--fc-size', cfg.size + 'px');
     for (const s of ['ring', 'dot', 'blend', 'hand']) setCls('fc-style-' + s, cfg.style === s);
     setCls('fc-mode-hover', cfg.mode === 'hover');
-    if (!cfg.tilt) untilt();
     if (cfg.enabled) {
       mount();
       updateActive();
     } else {
       restoreCursor();
-      untilt();
       root.remove();
     }
   }
@@ -98,33 +94,6 @@
     const active = cfg.enabled && seen && (cfg.mode !== 'hover' || !!linkEl);
     if (active) hideCursorOn(overEl); else restoreCursor();
     setCls('fc-idle', !active);
-  }
-
-  function untilt() {
-    if (!tiltEl) return;
-    const el = tiltEl;
-    el.style.transform = tiltOrig;
-    lastTilt = '';
-    setTimeout(() => { if (el !== tiltEl) el.style.transition = el.__fcTr || ''; }, 250);
-    tiltEl = null;
-  }
-
-  function applyTilt() {
-    if (!cfg.tilt || !linkEl || reducedMotion.matches) return untilt();
-    const r = linkRect;
-    if (!r || r.width > 400 || r.height > 200) return untilt();
-    if (tiltEl !== linkEl) {
-      untilt();
-      tiltEl = linkEl;
-      tiltOrig = linkEl.style.transform;
-      linkEl.__fcTr = linkEl.style.transition;
-      linkEl.style.transition = 'transform .15s ease-out';
-    }
-    const px = (mx - r.left) / r.width - 0.5;   // -0.5…0.5
-    const py = (my - r.top) / r.height - 0.5;
-    const base = tiltOrig && tiltOrig !== 'none' ? tiltOrig + ' ' : '';
-    const t = `${base}perspective(500px) rotateX(${(-py * 18).toFixed(1)}deg) rotateY(${(px * 18).toFixed(1)}deg) scale(1.04)`;
-    if (t !== lastTilt) { lastTilt = t; linkEl.style.transform = t; }
   }
 
   function isTextField(el) {
@@ -164,17 +133,17 @@
       setCls('fc-text', true);
       setCls('fc-link', false);
       linkEl = linkRect = null;
-      untilt();
       updateActive();
       return;
     }
     setCls('fc-text', false);
     const prev = linkEl;
     linkEl = pointerTarget(el);
-    if (linkEl !== prev) linkRect = linkEl ? linkEl.getBoundingClientRect() : null;
+    // Размеры кнопки нужны только магниту, а он действует только на кольцо
+    const needRect = cfg.magnetic && cfg.style !== 'hand';
+    if (linkEl !== prev) linkRect = linkEl && needRect ? linkEl.getBoundingClientRect() : null;
     setCls('fc-link', !!linkEl);
     if (linkEl && !prev && cfg.mode === 'hover') { rx = mx; ry = my; vx = vy = 0; }
-    if (!linkEl) untilt();
     updateActive();
     if (linkEl && !running) { running = true; requestAnimationFrame(tick); }
   }
@@ -216,7 +185,6 @@
     const isHand = cfg.style === 'hand';
     if (!idle && (!isHand || cls['fc-text'])) dot.style.transform = `translate3d(${mx}px, ${my}px, 0)`;
     if (!idle && !isHand) ring.style.transform = `translate3d(${rx.toFixed(1)}px, ${ry.toFixed(1)}px, 0) rotate(${ang.toFixed(1)}deg) scale(${(1 + st).toFixed(3)}, ${(1 - st * 0.6).toFixed(3)})`;
-    if (linkEl) applyTilt();
 
     // Палец качается как маятник: движение мыши его толкает,
     // дальше он сам раскачивается туда-сюда и постепенно затухает
@@ -229,7 +197,7 @@
 
     // Пока всё не успокоилось, продолжаем анимацию, потом засыпаем до следующего движения мыши
     if (Math.abs(gx - rx) > 0.1 || Math.abs(gy - ry) > 0.1 || speed > 0.05 ||
-        Math.abs(hAng) > 0.05 || Math.abs(hVel) > 0.05 || (linkEl && mdx !== 0)) {
+        Math.abs(hAng) > 0.05 || Math.abs(hVel) > 0.05 ) {
       requestAnimationFrame(tick);
     } else {
       running = false;
@@ -251,7 +219,7 @@
   function onUp() { root.classList.remove('fc-down'); }
 
   function onLeave(e) {
-    if (!e.relatedTarget) { setCls('fc-hidden', true); untilt(); restoreCursor(); overEl = null; }
+    if (!e.relatedTarget) { setCls('fc-hidden', true); restoreCursor(); overEl = null; }
   }
 
   function init() {
@@ -270,7 +238,7 @@
     document.addEventListener('mouseout', onLeave, opts);
     addEventListener('blur', () => setCls('fc-hidden', true));
     // При прокрутке и смене размера кнопка сдвигается — пересчитаем её размеры
-    const refreshRect = () => { if (linkEl) linkRect = linkEl.getBoundingClientRect(); };
+    const refreshRect = () => { if (linkRect) linkRect = linkEl.getBoundingClientRect(); };
     addEventListener('scroll', refreshRect, opts);
     addEventListener('resize', refreshRect, opts);
   }
