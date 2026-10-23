@@ -1,6 +1,3 @@
-/* Системный курсор прячем только когда наш включён и мышь над страницей */
-html.fc-on, html.fc-on * { cursor: none !important; }
-
 #fc-root {
   display: block; position: fixed; inset: 0;
   pointer-events: none;

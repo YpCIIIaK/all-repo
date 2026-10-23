@@ -21,11 +21,17 @@
   let hAng = 0, hVel = 0;     // наклон пальца и его скорость — пружина
   // Картинка стандартной руки; кончик пальца — точка клика
   const HAND_URL = chrome.runtime.getURL('hand.png');
+  let hiddenEl = null, hiddenVal = '', hiddenPrio = '';  // элемент, у которого спрятан системный курсор
+  let overEl = null;          // самый глубокий элемент под мышью
+  let linkRect = null;        // размеры текущей кнопки (кэш, сбрасывается при прокрутке)
+  let lastTilt = '';
+  const cls = {};             // текущие классы #fc-root — чтобы не трогать DOM без нужды
 
   function build() {
     root = document.createElement('div');
     root.id = 'fc-root';
     root.className = 'fc-hidden';
+    cls['fc-hidden'] = true;
     root.setAttribute('aria-hidden', 'true');
     ring = document.createElement('div');
     ring.className = 'fc-ring';
@@ -41,6 +47,31 @@
     root.append(ring, dot, hand);
   }
 
+  function setCls(name, on) {
+    if (cls[name] === on) return;
+    cls[name] = on;
+    root.classList.toggle(name, on);
+  }
+
+  // Системный курсор прячем точечно — только у элемента под мышью, а не у всей страницы:
+  // правка одного элемента не заставляет браузер пересчитывать стили всего документа
+  function hideCursorOn(el) {
+    if (hiddenEl === el) return;
+    restoreCursor();
+    if (!el || !el.style) return;
+    hiddenEl = el;
+    hiddenVal = el.style.getPropertyValue('cursor');
+    hiddenPrio = el.style.getPropertyPriority('cursor');
+    el.style.setProperty('cursor', 'none', 'important');
+  }
+
+  function restoreCursor() {
+    if (!hiddenEl) return;
+    if (hiddenVal) hiddenEl.style.setProperty('cursor', hiddenVal, hiddenPrio);
+    else hiddenEl.style.removeProperty('cursor');
+    hiddenEl = null;
+  }
+
   function mount() {
     // Некоторые сайты пересобирают документ — возвращаем курсор на место
     if (!root.isConnected) document.documentElement.appendChild(root);
@@ -49,15 +80,14 @@
   function applySettings() {
     root.style.setProperty('--fc-color', cfg.color);
     root.style.setProperty('--fc-size', cfg.size + 'px');
-    root.classList.remove('fc-style-ring', 'fc-style-dot', 'fc-style-blend', 'fc-style-hand');
-    root.classList.add('fc-style-' + cfg.style);
-    root.classList.toggle('fc-mode-hover', cfg.mode === 'hover');
+    for (const s of ['ring', 'dot', 'blend', 'hand']) setCls('fc-style-' + s, cfg.style === s);
+    setCls('fc-mode-hover', cfg.mode === 'hover');
     if (!cfg.tilt) untilt();
     if (cfg.enabled) {
       mount();
       updateActive();
     } else {
-      document.documentElement.classList.remove('fc-on');
+      restoreCursor();
       untilt();
       root.remove();
     }
@@ -66,22 +96,23 @@
   // В режиме hover системный курсор прячется только над ссылками и кнопками
   function updateActive() {
     const active = cfg.enabled && seen && (cfg.mode !== 'hover' || !!linkEl);
-    document.documentElement.classList.toggle('fc-on', active);
-    root.classList.toggle('fc-idle', !active);
+    if (active) hideCursorOn(overEl); else restoreCursor();
+    setCls('fc-idle', !active);
   }
 
   function untilt() {
     if (!tiltEl) return;
     const el = tiltEl;
     el.style.transform = tiltOrig;
+    lastTilt = '';
     setTimeout(() => { if (el !== tiltEl) el.style.transition = el.__fcTr || ''; }, 250);
     tiltEl = null;
   }
 
   function applyTilt() {
     if (!cfg.tilt || !linkEl || reducedMotion.matches) return untilt();
-    const r = linkEl.getBoundingClientRect();
-    if (r.width > 400 || r.height > 200) return untilt();
+    const r = linkRect;
+    if (!r || r.width > 400 || r.height > 200) return untilt();
     if (tiltEl !== linkEl) {
       untilt();
       tiltEl = linkEl;
@@ -92,7 +123,8 @@
     const px = (mx - r.left) / r.width - 0.5;   // -0.5…0.5
     const py = (my - r.top) / r.height - 0.5;
     const base = tiltOrig && tiltOrig !== 'none' ? tiltOrig + ' ' : '';
-    linkEl.style.transform = `${base}perspective(500px) rotateX(${(-py * 18).toFixed(2)}deg) rotateY(${(px * 18).toFixed(2)}deg) scale(1.04)`;
+    const t = `${base}perspective(500px) rotateX(${(-py * 18).toFixed(1)}deg) rotateY(${(px * 18).toFixed(1)}deg) scale(1.04)`;
+    if (t !== lastTilt) { lastTilt = t; linkEl.style.transform = t; }
   }
 
   function isTextField(el) {
@@ -108,24 +140,14 @@
     return Math.round(Math.min(Math.max(fs * 1.25, 14), 48));
   }
 
-  // Какой курсор сайт хотел бы показать над элементом. Пока наш курсор активен,
-  // на странице стоит cursor: none, поэтому на миг снимаем его, чтобы прочитать настоящий
-  function siteCursor(el) {
-    const html = document.documentElement;
-    const on = html.classList.contains('fc-on');
-    if (on) html.classList.remove('fc-on');
-    const c = getComputedStyle(el).cursor;
-    if (on) html.classList.add('fc-on');
-    return c;
-  }
-
   // Элемент, над которым должна быть рука: ссылки и кнопки, а также всё,
   // чему сайт сам поставил cursor: pointer (div-кнопки, карточки и т. п.)
   function pointerTarget(el) {
     if (!el.closest) return null;
-    const c = siteCursor(el);
+    const c = getComputedStyle(el).cursor;   // курсор, который хочет сайт
     if (c === 'pointer') return el.closest(LINK_SEL) || el;
-    if (c !== 'auto') return null;   // сайт явно просит другой курсор — не мешаем
+    // У кнопок браузер сам ставит default; другой курсор (запрет, текст, …) — сайт просит явно, не мешаем
+    if (c !== 'auto' && c !== 'default') return null;
     return el.closest(LINK_SEL);
   }
 
@@ -133,19 +155,24 @@
     if (!cfg.enabled) return;
     const t = e.composedPath ? e.composedPath()[0] : e.target;
     const el = t && t.nodeType === 1 ? t : e.target;
+    if (el === overEl) return;
+    // Сначала возвращаем курсор прежнему элементу, иначе новый унаследует от него cursor: none
+    restoreCursor();
+    overEl = el;
     if (isTextField(el)) {
       root.style.setProperty('--fc-text-h', textHeight(el) + 'px');
-      root.classList.add('fc-text');
-      root.classList.remove('fc-link');
-      linkEl = null;
+      setCls('fc-text', true);
+      setCls('fc-link', false);
+      linkEl = linkRect = null;
       untilt();
       updateActive();
       return;
     }
-    root.classList.remove('fc-text');
+    setCls('fc-text', false);
     const prev = linkEl;
     linkEl = pointerTarget(el);
-    root.classList.toggle('fc-link', !!linkEl);
+    if (linkEl !== prev) linkRect = linkEl ? linkEl.getBoundingClientRect() : null;
+    setCls('fc-link', !!linkEl);
     if (linkEl && !prev && cfg.mode === 'hover') { rx = mx; ry = my; vx = vy = 0; }
     if (!linkEl) untilt();
     updateActive();
@@ -160,7 +187,7 @@
       rx = mx; ry = my; lastMx = mx;
       updateActive();
     }
-    root.classList.remove('fc-hidden');
+    setCls('fc-hidden', false);
     mount();
     if (!running) { running = true; requestAnimationFrame(tick); }
   }
@@ -168,8 +195,8 @@
   function tick() {
     // Магнит: кольцо слегка тянется к центру кнопки
     tx = 0; ty = 0;
-    if (cfg.magnetic && linkEl && !reducedMotion.matches && linkEl.isConnected) {
-      const r = linkEl.getBoundingClientRect();
+    if (cfg.magnetic && linkRect && !reducedMotion.matches) {
+      const r = linkRect;
       if (r.width < 400 && r.height < 200) {
         tx = (r.left + r.width / 2 - mx) * 0.3;
         ty = (r.top + r.height / 2 - my) * 0.3;
@@ -184,8 +211,11 @@
     const speed = Math.hypot(vx, vy);
     const st = reducedMotion.matches ? 0 : Math.min(speed / 40, 0.45);
     const ang = Math.atan2(vy, vx) * 180 / Math.PI;
-    dot.style.transform = `translate3d(${mx}px, ${my}px, 0)`;
-    ring.style.transform = `translate3d(${rx}px, ${ry}px, 0) rotate(${ang.toFixed(1)}deg) scale(${(1 + st).toFixed(3)}, ${(1 - st * 0.6).toFixed(3)})`;
+    // Двигаем только то, что сейчас видно
+    const idle = cls['fc-idle'];
+    const isHand = cfg.style === 'hand';
+    if (!idle && (!isHand || cls['fc-text'])) dot.style.transform = `translate3d(${mx}px, ${my}px, 0)`;
+    if (!idle && !isHand) ring.style.transform = `translate3d(${rx.toFixed(1)}px, ${ry.toFixed(1)}px, 0) rotate(${ang.toFixed(1)}deg) scale(${(1 + st).toFixed(3)}, ${(1 - st * 0.6).toFixed(3)})`;
     if (linkEl) applyTilt();
 
     // Палец качается как маятник: движение мыши его толкает,
@@ -195,11 +225,11 @@
     hVel = (hVel - hAng * 0.045) * 0.93;
     hAng = Math.max(-20, Math.min(20, hAng + hVel));
     if (reducedMotion.matches) hAng = hVel = 0;
-    hand.style.transform = `translate3d(${mx}px, ${my}px, 0) rotate(${hAng.toFixed(2)}deg)`;
+    if (!idle && isHand) hand.style.transform = `translate3d(${mx}px, ${my}px, 0) rotate(${hAng.toFixed(1)}deg)`;
 
-    // Пока кольцо не догнало мышь, продолжаем анимацию, потом засыпаем
-    if (Math.abs(gx - rx) > 0.1 || Math.abs(gy - ry) > 0.1 || speed > 0.05 || linkEl ||
-        Math.abs(hAng) > 0.05 || Math.abs(hVel) > 0.05) {
+    // Пока всё не успокоилось, продолжаем анимацию, потом засыпаем до следующего движения мыши
+    if (Math.abs(gx - rx) > 0.1 || Math.abs(gy - ry) > 0.1 || speed > 0.05 ||
+        Math.abs(hAng) > 0.05 || Math.abs(hVel) > 0.05 || (linkEl && mdx !== 0)) {
       requestAnimationFrame(tick);
     } else {
       running = false;
@@ -221,7 +251,7 @@
   function onUp() { root.classList.remove('fc-down'); }
 
   function onLeave(e) {
-    if (!e.relatedTarget) { root.classList.add('fc-hidden'); untilt(); }
+    if (!e.relatedTarget) { setCls('fc-hidden', true); untilt(); restoreCursor(); overEl = null; }
   }
 
   function init() {
@@ -238,7 +268,11 @@
     addEventListener('pointerup', onUp, opts);
     addEventListener('mouseover', onOver, opts);
     document.addEventListener('mouseout', onLeave, opts);
-    addEventListener('blur', () => root.classList.add('fc-hidden'));
+    addEventListener('blur', () => setCls('fc-hidden', true));
+    // При прокрутке и смене размера кнопка сдвигается — пересчитаем её размеры
+    const refreshRect = () => { if (linkEl) linkRect = linkEl.getBoundingClientRect(); };
+    addEventListener('scroll', refreshRect, opts);
+    addEventListener('resize', refreshRect, opts);
   }
 
   if (document.documentElement) init();

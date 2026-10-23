@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Fancy Cursor",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Свой курсор на любом сайте: эффекты при наведении на ссылки, свой текстовый курсор, волна при клике.",
   "permissions": [
     "storage",
