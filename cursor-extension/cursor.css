@@ -8,7 +8,7 @@ html.fc-on, html.fc-on * { cursor: none !important; }
   contain: strict;
 }
 
-.fc-dot, .fc-ring, .fc-ripple {
+.fc-dot, .fc-ring, .fc-ripple, .fc-hand {
   display: block; padding: 0;
   position: fixed; top: 0; left: 0;
   pointer-events: none;
@@ -75,13 +75,33 @@ html.fc-on, html.fc-on * { cursor: none !important; }
 #fc-root.fc-style-blend.fc-link .fc-ring { background: #fff; }
 #fc-root.fc-style-blend:not(.fc-text) .fc-dot { opacity: 0; }
 
+/* Стиль «палец»: своя рука-указатель вместо кольца */
+.fc-hand { opacity: 0; transition: opacity .15s; }
+.fc-hand svg {
+  display: block; position: absolute;
+  width: calc(var(--fc-size) * 1.15); height: calc(var(--fc-size) * 1.15);
+  /* кончик пальца ровно в точке мыши; вращение вокруг него */
+  left: calc(var(--fc-size) * 1.15 * -13.5 / 32); top: calc(var(--fc-size) * 1.15 * -2 / 32);
+  transform-origin: 42.2% 6.25%;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,.35));
+  transform: scale(.6);
+  transition: transform .25s cubic-bezier(.3, 1.6, .5, 1);
+}
+#fc-root.fc-style-hand .fc-ring, #fc-root.fc-style-hand .fc-dot { opacity: 0; }
+#fc-root.fc-style-hand .fc-hand { opacity: 1; }
+#fc-root.fc-style-hand.fc-link .fc-hand svg { transform: scale(1); }
+#fc-root.fc-style-hand.fc-down .fc-hand svg { transform: scale(.82); transition-duration: .08s; }
+#fc-root.fc-style-hand.fc-text .fc-hand { opacity: 0; }
+#fc-root.fc-style-hand.fc-text .fc-dot { opacity: 1; }
+
 /* Курсор ушёл за пределы окна или в режиме hover мышь не над ссылкой */
 #fc-root.fc-hidden .fc-dot, #fc-root.fc-hidden .fc-ring,
-#fc-root.fc-idle .fc-dot, #fc-root.fc-idle .fc-ring { opacity: 0; transition: none; }
+#fc-root.fc-idle .fc-dot, #fc-root.fc-idle .fc-ring,
+#fc-root.fc-hidden .fc-hand, #fc-root.fc-idle .fc-hand { opacity: 0; transition: none; }
 #fc-root.fc-idle.fc-text .fc-dot { opacity: 0; }
 
 /* В режиме hover в центре кольца остаётся точка-прицел */
-#fc-root.fc-mode-hover.fc-link .fc-dot { opacity: 1; }
+#fc-root.fc-mode-hover.fc-link:not(.fc-style-hand) .fc-dot { opacity: 1; }
 
 .fc-ripple {
   width: 10px; height: 10px; margin: -5px 0 0 -5px;

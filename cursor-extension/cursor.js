@@ -17,6 +17,14 @@
   let linkEl = null;
   let vx = 0, vy = 0;         // сглаженная скорость — для наклона курсора
   let tiltEl = null, tiltOrig = '';
+  let hand, lastMx = -100;
+  let hAng = 0, hVel = 0;     // наклон пальца и его скорость — пружина
+  // Рука-указатель; кончик пальца (точка клика) — в (13.5, 2) из 32×32
+  const HAND_SVG = '<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">' +
+    '<path d="M11 15V4.5a2.5 2.5 0 0 1 5 0V12a2.5 2.5 0 0 1 5 0v1a2.5 2.5 0 0 1 5 0v1.5a2.3 2.3 0 0 1 4 1.5V21' +
+    'c0 6-4 10-9.5 10H18c-4 0-6-1.8-8.2-5L5.3 19.6a2.3 2.3 0 0 1 3.6-2.9L11 19Z" ' +
+    'fill="var(--fc-color)" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>' +
+    '<path d="M16 12v6M21 13v5M26 14.5v3.5" stroke="#fff" stroke-width="1.3" stroke-linecap="round" opacity=".7"/></svg>';
 
   function build() {
     root = document.createElement('div');
@@ -27,7 +35,10 @@
     ring.className = 'fc-ring';
     dot = document.createElement('div');
     dot.className = 'fc-dot';
-    root.append(ring, dot);
+    hand = document.createElement('div');
+    hand.className = 'fc-hand';
+    hand.innerHTML = HAND_SVG;
+    root.append(ring, dot, hand);
   }
 
   function mount() {
@@ -38,7 +49,7 @@
   function applySettings() {
     root.style.setProperty('--fc-color', cfg.color);
     root.style.setProperty('--fc-size', cfg.size + 'px');
-    root.classList.remove('fc-style-ring', 'fc-style-dot', 'fc-style-blend');
+    root.classList.remove('fc-style-ring', 'fc-style-dot', 'fc-style-blend', 'fc-style-hand');
     root.classList.add('fc-style-' + cfg.style);
     root.classList.toggle('fc-mode-hover', cfg.mode === 'hover');
     if (!cfg.tilt) untilt();
@@ -125,7 +136,7 @@
     mx = e.clientX; my = e.clientY;
     if (!seen) {
       seen = true;
-      rx = mx; ry = my;
+      rx = mx; ry = my; lastMx = mx;
       updateActive();
     }
     root.classList.remove('fc-hidden');
@@ -155,8 +166,17 @@
     dot.style.transform = `translate3d(${mx}px, ${my}px, 0)`;
     ring.style.transform = `translate3d(${rx}px, ${ry}px, 0) rotate(${ang.toFixed(1)}deg) scale(${(1 + st).toFixed(3)}, ${(1 - st * 0.6).toFixed(3)})`;
     if (linkEl) applyTilt();
+
+    // Палец: наклоняется в сторону движения и качается на пружине
+    const mdx = mx - lastMx; lastMx = mx;
+    const target = reducedMotion.matches ? 0 : Math.max(-35, Math.min(35, mdx * 2.2));
+    hVel = (hVel + (target - hAng) * 0.2) * 0.72;
+    hAng += hVel;
+    hand.style.transform = `translate3d(${mx}px, ${my}px, 0) rotate(${hAng.toFixed(2)}deg)`;
+
     // Пока кольцо не догнало мышь, продолжаем анимацию, потом засыпаем
-    if (Math.abs(gx - rx) > 0.1 || Math.abs(gy - ry) > 0.1 || speed > 0.05 || linkEl) {
+    if (Math.abs(gx - rx) > 0.1 || Math.abs(gy - ry) > 0.1 || speed > 0.05 || linkEl ||
+        Math.abs(hAng) > 0.05 || Math.abs(hVel) > 0.05) {
       requestAnimationFrame(tick);
     } else {
       running = false;
