@@ -22,6 +22,8 @@
   const HAND_URL = chrome.runtime.getURL('hand.png');
   let hiddenEl = null, hiddenVal = '', hiddenPrio = '';  // элемент, у которого спрятан системный курсор
   let overEl = null;          // самый глубокий элемент под мышью
+  let offTimer = 0;           // отложенный возврат к системному курсору
+  const OFF_DELAY = 140;      // мс: короткие «провалы» между кнопками не дёргают курсор
   let linkRect = null;        // размеры текущей кнопки (кэш, сбрасывается при прокрутке)
   const cls = {};             // текущие классы #fc-root — чтобы не трогать DOM без нужды
 
@@ -129,6 +131,7 @@
     restoreCursor();
     overEl = el;
     if (isTextField(el)) {
+      clearTimeout(offTimer);
       root.style.setProperty('--fc-text-h', textHeight(el) + 'px');
       setCls('fc-text', true);
       setCls('fc-link', false);
@@ -138,7 +141,22 @@
     }
     setCls('fc-text', false);
     const prev = linkEl;
-    linkEl = pointerTarget(el);
+    const next = pointerTarget(el);
+    if (!next && prev && cfg.mode === 'hover') {
+      // Ушли с кнопки на «пустое» место. Часто это щель между соседними кнопками
+      // (строка письма в Gmail и т. п.) — не переключаемся сразу, а ждём чуть-чуть
+      hideCursorOn(el);
+      clearTimeout(offTimer);
+      offTimer = setTimeout(() => {
+        if (overEl !== el) return;
+        linkEl = linkRect = null;
+        setCls('fc-link', false);
+        updateActive();
+      }, OFF_DELAY);
+      return;
+    }
+    clearTimeout(offTimer);
+    linkEl = next;
     // Размеры кнопки нужны только магниту, а он действует только на кольцо
     const needRect = cfg.magnetic && cfg.style !== 'hand';
     if (linkEl !== prev) linkRect = linkEl && needRect ? linkEl.getBoundingClientRect() : null;
@@ -219,7 +237,7 @@
   function onUp() { root.classList.remove('fc-down'); }
 
   function onLeave(e) {
-    if (!e.relatedTarget) { setCls('fc-hidden', true); restoreCursor(); overEl = null; }
+    if (!e.relatedTarget) { clearTimeout(offTimer); linkEl = linkRect = null; setCls('fc-link', false); setCls('fc-hidden', true); restoreCursor(); overEl = null; }
   }
 
   function init() {
