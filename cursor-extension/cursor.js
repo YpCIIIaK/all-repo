@@ -15,6 +15,8 @@
   let tx = 0, ty = 0;         // куда тянет магнит
   let seen = false, running = false;
   let linkEl = null;
+  let vx = 0, vy = 0;         // сглаженная скорость — для наклона курсора
+  let tiltEl = null, tiltOrig = '';
 
   function build() {
     root = document.createElement('div');
@@ -38,14 +40,48 @@
     root.style.setProperty('--fc-size', cfg.size + 'px');
     root.classList.remove('fc-style-ring', 'fc-style-dot', 'fc-style-blend');
     root.classList.add('fc-style-' + cfg.style);
-    const html = document.documentElement;
+    root.classList.toggle('fc-mode-hover', cfg.mode === 'hover');
+    if (!cfg.tilt) untilt();
     if (cfg.enabled) {
       mount();
-      html.classList.toggle('fc-on', seen);
+      updateActive();
     } else {
-      html.classList.remove('fc-on');
+      document.documentElement.classList.remove('fc-on');
+      untilt();
       root.remove();
     }
+  }
+
+  // В режиме hover системный курсор прячется только над ссылками и кнопками
+  function updateActive() {
+    const active = cfg.enabled && seen && (cfg.mode !== 'hover' || !!linkEl);
+    document.documentElement.classList.toggle('fc-on', active);
+    root.classList.toggle('fc-idle', !active);
+  }
+
+  function untilt() {
+    if (!tiltEl) return;
+    const el = tiltEl;
+    el.style.transform = tiltOrig;
+    setTimeout(() => { if (el !== tiltEl) el.style.transition = el.__fcTr || ''; }, 250);
+    tiltEl = null;
+  }
+
+  function applyTilt() {
+    if (!cfg.tilt || !linkEl || reducedMotion.matches) return untilt();
+    const r = linkEl.getBoundingClientRect();
+    if (r.width > 400 || r.height > 200) return untilt();
+    if (tiltEl !== linkEl) {
+      untilt();
+      tiltEl = linkEl;
+      tiltOrig = linkEl.style.transform;
+      linkEl.__fcTr = linkEl.style.transition;
+      linkEl.style.transition = 'transform .15s ease-out';
+    }
+    const px = (mx - r.left) / r.width - 0.5;   // -0.5…0.5
+    const py = (my - r.top) / r.height - 0.5;
+    const base = tiltOrig && tiltOrig !== 'none' ? tiltOrig + ' ' : '';
+    linkEl.style.transform = `${base}perspective(500px) rotateX(${(-py * 18).toFixed(2)}deg) rotateY(${(px * 18).toFixed(2)}deg) scale(1.04)`;
   }
 
   function isTextField(el) {
@@ -70,11 +106,18 @@
       root.classList.add('fc-text');
       root.classList.remove('fc-link');
       linkEl = null;
+      untilt();
+      updateActive();
       return;
     }
     root.classList.remove('fc-text');
+    const prev = linkEl;
     linkEl = el.closest ? el.closest(LINK_SEL) : null;
     root.classList.toggle('fc-link', !!linkEl);
+    if (linkEl && !prev && cfg.mode === 'hover') { rx = mx; ry = my; vx = vy = 0; }
+    if (!linkEl) untilt();
+    updateActive();
+    if (linkEl && !running) { running = true; requestAnimationFrame(tick); }
   }
 
   function onMove(e) {
@@ -83,7 +126,7 @@
     if (!seen) {
       seen = true;
       rx = mx; ry = my;
-      document.documentElement.classList.add('fc-on');
+      updateActive();
     }
     root.classList.remove('fc-hidden');
     mount();
@@ -102,12 +145,18 @@
     }
     const k = reducedMotion.matches ? 1 : cfg.lag;
     const gx = mx + tx, gy = my + ty;
-    rx += (gx - rx) * k;
-    ry += (gy - ry) * k;
+    const dx = (gx - rx) * k, dy = (gy - ry) * k;
+    rx += dx; ry += dy;
+    vx += (dx - vx) * 0.35; vy += (dy - vy) * 0.35;
+    // Наклон: кольцо поворачивается по направлению движения и вытягивается от скорости
+    const speed = Math.hypot(vx, vy);
+    const st = reducedMotion.matches ? 0 : Math.min(speed / 40, 0.45);
+    const ang = Math.atan2(vy, vx) * 180 / Math.PI;
     dot.style.transform = `translate3d(${mx}px, ${my}px, 0)`;
-    ring.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
+    ring.style.transform = `translate3d(${rx}px, ${ry}px, 0) rotate(${ang.toFixed(1)}deg) scale(${(1 + st).toFixed(3)}, ${(1 - st * 0.6).toFixed(3)})`;
+    if (linkEl) applyTilt();
     // Пока кольцо не догнало мышь, продолжаем анимацию, потом засыпаем
-    if (Math.abs(gx - rx) > 0.1 || Math.abs(gy - ry) > 0.1 || linkEl) {
+    if (Math.abs(gx - rx) > 0.1 || Math.abs(gy - ry) > 0.1 || speed > 0.05 || linkEl) {
       requestAnimationFrame(tick);
     } else {
       running = false;
@@ -117,7 +166,7 @@
   function onDown(e) {
     if (!cfg.enabled || e.pointerType === 'touch') return;
     root.classList.add('fc-down');
-    if (cfg.ripple && !reducedMotion.matches && !root.classList.contains('fc-text')) {
+    if (cfg.ripple && !reducedMotion.matches && !root.classList.contains('fc-text') && !root.classList.contains('fc-idle')) {
       const r = document.createElement('div');
       r.className = 'fc-ripple';
       r.style.setProperty('--fc-at', `translate(${e.clientX}px, ${e.clientY}px)`);
@@ -129,7 +178,7 @@
   function onUp() { root.classList.remove('fc-down'); }
 
   function onLeave(e) {
-    if (!e.relatedTarget) root.classList.add('fc-hidden');
+    if (!e.relatedTarget) { root.classList.add('fc-hidden'); untilt(); }
   }
 
   function init() {

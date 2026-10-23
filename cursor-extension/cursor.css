@@ -75,8 +75,13 @@ html.fc-on, html.fc-on * { cursor: none !important; }
 #fc-root.fc-style-blend.fc-link .fc-ring { background: #fff; }
 #fc-root.fc-style-blend:not(.fc-text) .fc-dot { opacity: 0; }
 
-/* Курсор ушёл за пределы окна */
-#fc-root.fc-hidden .fc-dot, #fc-root.fc-hidden .fc-ring { opacity: 0; }
+/* Курсор ушёл за пределы окна или в режиме hover мышь не над ссылкой */
+#fc-root.fc-hidden .fc-dot, #fc-root.fc-hidden .fc-ring,
+#fc-root.fc-idle .fc-dot, #fc-root.fc-idle .fc-ring { opacity: 0; transition: none; }
+#fc-root.fc-idle.fc-text .fc-dot { opacity: 0; }
+
+/* В режиме hover в центре кольца остаётся точка-прицел */
+#fc-root.fc-mode-hover.fc-link .fc-dot { opacity: 1; }
 
 .fc-ripple {
   width: 10px; height: 10px; margin: -5px 0 0 -5px;

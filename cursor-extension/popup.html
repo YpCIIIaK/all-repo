@@ -12,6 +12,14 @@
   </header>
 
   <section>
+    <div class="label">Когда показывать</div>
+    <div class="seg" id="mode">
+      <button data-v="hover">На ссылках</button>
+      <button data-v="always">Везде</button>
+    </div>
+  </section>
+
+  <section>
     <div class="label">Стиль</div>
     <div class="seg" id="style">
       <button data-v="ring">Кольцо</button>
@@ -43,6 +51,11 @@
   <section class="row">
     <label for="magnetic">Магнит к кнопкам</label>
     <input type="checkbox" id="magnetic">
+  </section>
+
+  <section class="row">
+    <label for="tilt">Наклон кнопок</label>
+    <input type="checkbox" id="tilt">
   </section>
 
   <button id="reset" class="reset">Сбросить</button>
