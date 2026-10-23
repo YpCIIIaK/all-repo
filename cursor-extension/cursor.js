@@ -20,10 +20,8 @@
   let hAng = 0, hVel = 0;     // наклон пальца и его скорость — пружина
   // Картинка стандартной руки; кончик пальца — точка клика
   const HAND_URL = chrome.runtime.getURL('hand.png');
-  let hiddenEl = null, hiddenVal = '', hiddenPrio = '';  // элемент, у которого спрятан системный курсор
+  let hiddenEl = null;        // кнопка, у которой спрятан системный курсор
   let overEl = null;          // самый глубокий элемент под мышью
-  let offTimer = 0;           // отложенный возврат к системному курсору
-  const OFF_DELAY = 140;      // мс: короткие «провалы» между кнопками не дёргают курсор
   let linkRect = null;        // размеры текущей кнопки (кэш, сбрасывается при прокрутке)
   const cls = {};             // текущие классы #fc-root — чтобы не трогать DOM без нужды
 
@@ -53,22 +51,21 @@
     root.classList.toggle(name, on);
   }
 
-  // Системный курсор прячем точечно — только у элемента под мышью, а не у всей страницы:
-  // правка одного элемента не заставляет браузер пересчитывать стили всего документа
+  // Системный курсор прячем не у всей страницы, а только у кнопки под мышью — вместе
+  // со всем, что внутри (атрибут + правило в cursor.css). Так не пересчитываются стили
+  // всего документа, и не вылезает системная рука у кнопок, которые сайт вставляет
+  // на лету (как Gmail при наведении на строку письма)
   function hideCursorOn(el) {
     if (hiddenEl === el) return;
     restoreCursor();
-    if (!el || !el.style) return;
+    if (!el || !el.setAttribute) return;
     hiddenEl = el;
-    hiddenVal = el.style.getPropertyValue('cursor');
-    hiddenPrio = el.style.getPropertyPriority('cursor');
-    el.style.setProperty('cursor', 'none', 'important');
+    el.setAttribute('data-fc-hide', '');
   }
 
   function restoreCursor() {
     if (!hiddenEl) return;
-    if (hiddenVal) hiddenEl.style.setProperty('cursor', hiddenVal, hiddenPrio);
-    else hiddenEl.style.removeProperty('cursor');
+    hiddenEl.removeAttribute('data-fc-hide');
     hiddenEl = null;
   }
 
@@ -94,7 +91,7 @@
   // В режиме hover системный курсор прячется только над ссылками и кнопками
   function updateActive() {
     const active = cfg.enabled && seen && (cfg.mode !== 'hover' || !!linkEl);
-    if (active) hideCursorOn(overEl); else restoreCursor();
+    if (active) hideCursorOn(linkEl || overEl); else restoreCursor();
     setCls('fc-idle', !active);
   }
 
@@ -112,14 +109,31 @@
   }
 
   // Элемент, над которым должна быть рука: ссылки и кнопки, а также всё,
-  // чему сайт сам поставил cursor: pointer (div-кнопки, карточки и т. п.)
+  // чему сайт сам поставил cursor: pointer (div-кнопки, строки писем и т. п.)
   function pointerTarget(el) {
     if (!el.closest) return null;
-    const c = getComputedStyle(el).cursor;   // курсор, который хочет сайт
-    if (c === 'pointer') return el.closest(LINK_SEL) || el;
-    // У кнопок браузер сам ставит default; другой курсор (запрет, текст, …) — сайт просит явно, не мешаем
-    if (c !== 'auto' && c !== 'default') return null;
-    return el.closest(LINK_SEL);
+    // Пока у текущей кнопки спрятан курсор, getComputedStyle вернёт none — на миг снимаем
+    // пометку (это затрагивает только эту кнопку, а не всю страницу)
+    const h = hiddenEl;
+    if (h) h.removeAttribute('data-fc-hide');
+    let res = null;
+    const c = getComputedStyle(el).cursor;
+    if (c === 'pointer') {
+      // Курсор наследуется: поднимаемся до верхнего предка, у которого тоже pointer, —
+      // это вся кнопка или строка целиком, вместе со всем, что сайт в неё вставит
+      res = el;
+      for (let p = el.parentElement, i = 0; p && p !== document.body && i < 25; p = p.parentElement, i++) {
+        if (getComputedStyle(p).cursor !== 'pointer') break;
+        res = p;
+      }
+      const link = el.closest(LINK_SEL);
+      if (link && !res.contains(link)) res = link;
+    } else if (c === 'auto' || c === 'default') {
+      // У кнопок браузер сам ставит default; другой курсор (запрет, текст, …) — сайт просит явно, не мешаем
+      res = el.closest(LINK_SEL);
+    }
+    if (h) h.setAttribute('data-fc-hide', '');
+    return res;
   }
 
   function onOver(e) {
@@ -127,11 +141,8 @@
     const t = e.composedPath ? e.composedPath()[0] : e.target;
     const el = t && t.nodeType === 1 ? t : e.target;
     if (el === overEl) return;
-    // Сначала возвращаем курсор прежнему элементу, иначе новый унаследует от него cursor: none
-    restoreCursor();
     overEl = el;
     if (isTextField(el)) {
-      clearTimeout(offTimer);
       root.style.setProperty('--fc-text-h', textHeight(el) + 'px');
       setCls('fc-text', true);
       setCls('fc-link', false);
@@ -141,22 +152,7 @@
     }
     setCls('fc-text', false);
     const prev = linkEl;
-    const next = pointerTarget(el);
-    if (!next && prev && cfg.mode === 'hover') {
-      // Ушли с кнопки на «пустое» место. Часто это щель между соседними кнопками
-      // (строка письма в Gmail и т. п.) — не переключаемся сразу, а ждём чуть-чуть
-      hideCursorOn(el);
-      clearTimeout(offTimer);
-      offTimer = setTimeout(() => {
-        if (overEl !== el) return;
-        linkEl = linkRect = null;
-        setCls('fc-link', false);
-        updateActive();
-      }, OFF_DELAY);
-      return;
-    }
-    clearTimeout(offTimer);
-    linkEl = next;
+    linkEl = pointerTarget(el);
     // Размеры кнопки нужны только магниту, а он действует только на кольцо
     const needRect = cfg.magnetic && cfg.style !== 'hand';
     if (linkEl !== prev) linkRect = linkEl && needRect ? linkEl.getBoundingClientRect() : null;
@@ -237,7 +233,7 @@
   function onUp() { root.classList.remove('fc-down'); }
 
   function onLeave(e) {
-    if (!e.relatedTarget) { clearTimeout(offTimer); linkEl = linkRect = null; setCls('fc-link', false); setCls('fc-hidden', true); restoreCursor(); overEl = null; }
+    if (!e.relatedTarget) { setCls('fc-hidden', true); restoreCursor(); overEl = null; }
   }
 
   function init() {

@@ -1,3 +1,6 @@
+/* Системный курсор прячется только у кнопки под мышью (пометку ставит cursor.js) */
+[data-fc-hide], [data-fc-hide] * { cursor: none !important; }
+
 #fc-root {
   display: block; position: fixed; inset: 0;
   pointer-events: none;
