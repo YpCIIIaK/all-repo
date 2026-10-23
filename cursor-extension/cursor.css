@@ -79,10 +79,10 @@
 .fc-hand { opacity: 0; }
 .fc-hand img {
   display: block; position: absolute; max-width: none; margin: 0; border: 0;
-  width: 18.9px; height: 24px;
+  width: 19px; height: 24px;
   /* кончик пальца ровно в точке мыши; вращение вокруг него. Размер как у системной руки */
-  left: -7.5px; top: 0;
-  transform-origin: 7.5px 0;
+  left: -7px; top: 0;
+  transform-origin: 7px 0;
 }
 #fc-root.fc-style-hand .fc-ring, #fc-root.fc-style-hand .fc-dot { opacity: 0; }
 #fc-root.fc-style-hand .fc-hand { opacity: 1; }
