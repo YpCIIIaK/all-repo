@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Fancy Cursor",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Свой курсор на любом сайте: эффекты при наведении на ссылки, свой текстовый курсор, волна при клике.",
   "permissions": [
     "storage",
@@ -42,5 +42,15 @@
   ],
   "background": {
     "service_worker": "background.js"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "hand.png"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
 }

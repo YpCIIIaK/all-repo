@@ -19,12 +19,8 @@
   let tiltEl = null, tiltOrig = '';
   let hand, lastMx = -100;
   let hAng = 0, hVel = 0;     // наклон пальца и его скорость — пружина
-  // Копия стандартной системной руки (pointer); кончик пальца — точка клика, (7, 0.5) из 20×24
-  const HAND_SVG = '<svg viewBox="0 0 20 24" xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision">' +
-    '<path d="M5 13V2.5a2 2 0 0 1 4 0V8.6a1.5 1.5 0 0 1 3 0v.6a1.5 1.5 0 0 1 3 0v.8a1.5 1.5 0 0 1 3 0v5.6' +
-    'c0 2.6-.9 4.2-2 5.4V23.5H7.6V21.6L2.6 16.6c-1.4-1.4-1.4-3-.4-3.6.9-.5 1.9-.1 2.8.9Z" ' +
-    'fill="#fff" stroke="#000" stroke-width="1" stroke-linejoin="round"/>' +
-    '<path d="M12 9.6V13M15 10.2V13" stroke="#000" stroke-width="1" stroke-linecap="round"/></svg>';
+  // Картинка стандартной руки; кончик пальца — точка клика
+  const HAND_URL = chrome.runtime.getURL('hand.png');
 
   function build() {
     root = document.createElement('div');
@@ -37,7 +33,11 @@
     dot.className = 'fc-dot';
     hand = document.createElement('div');
     hand.className = 'fc-hand';
-    hand.innerHTML = HAND_SVG;
+    const img = document.createElement('img');
+    img.src = HAND_URL;
+    img.alt = '';
+    img.draggable = false;
+    hand.appendChild(img);
     root.append(ring, dot, hand);
   }
 
@@ -170,9 +170,9 @@
     // Палец качается как маятник: движение мыши его толкает,
     // дальше он сам раскачивается туда-сюда и постепенно затухает
     const mdx = mx - lastMx; lastMx = mx;
-    if (!reducedMotion.matches) hVel += Math.max(-4, Math.min(4, mdx * 0.09));
+    if (!reducedMotion.matches) hVel += Math.max(-4, Math.min(4, mdx * 0.12));
     hVel = (hVel - hAng * 0.045) * 0.93;
-    hAng = Math.max(-16, Math.min(16, hAng + hVel));
+    hAng = Math.max(-20, Math.min(20, hAng + hVel));
     if (reducedMotion.matches) hAng = hVel = 0;
     hand.style.transform = `translate3d(${mx}px, ${my}px, 0) rotate(${hAng.toFixed(2)}deg)`;
 
