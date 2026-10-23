@@ -19,12 +19,12 @@
   let tiltEl = null, tiltOrig = '';
   let hand, lastMx = -100;
   let hAng = 0, hVel = 0;     // наклон пальца и его скорость — пружина
-  // Рука-указатель; кончик пальца (точка клика) — в (13.5, 2) из 32×32
-  const HAND_SVG = '<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">' +
-    '<path d="M11 15V4.5a2.5 2.5 0 0 1 5 0V12a2.5 2.5 0 0 1 5 0v1a2.5 2.5 0 0 1 5 0v1.5a2.3 2.3 0 0 1 4 1.5V21' +
-    'c0 6-4 10-9.5 10H18c-4 0-6-1.8-8.2-5L5.3 19.6a2.3 2.3 0 0 1 3.6-2.9L11 19Z" ' +
-    'fill="#fff" stroke="#000" stroke-width="1.5" stroke-linejoin="round"/>' +
-    '<path d="M16 12v6M21 13v5M26 14.5v3.5" stroke="#000" stroke-width="1.2" stroke-linecap="round"/></svg>';
+  // Копия стандартной системной руки (pointer); кончик пальца — точка клика, (7, 0.5) из 20×24
+  const HAND_SVG = '<svg viewBox="0 0 20 24" xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision">' +
+    '<path d="M5 13V2.5a2 2 0 0 1 4 0V8.6a1.5 1.5 0 0 1 3 0v.6a1.5 1.5 0 0 1 3 0v.8a1.5 1.5 0 0 1 3 0v5.6' +
+    'c0 2.6-.9 4.2-2 5.4V23.5H7.6V21.6L2.6 16.6c-1.4-1.4-1.4-3-.4-3.6.9-.5 1.9-.1 2.8.9Z" ' +
+    'fill="#fff" stroke="#000" stroke-width="1" stroke-linejoin="round"/>' +
+    '<path d="M12 9.6V13M15 10.2V13" stroke="#000" stroke-width="1" stroke-linecap="round"/></svg>';
 
   function build() {
     root = document.createElement('div');

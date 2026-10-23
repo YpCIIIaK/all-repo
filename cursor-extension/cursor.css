@@ -76,21 +76,17 @@ html.fc-on, html.fc-on * { cursor: none !important; }
 #fc-root.fc-style-blend:not(.fc-text) .fc-dot { opacity: 0; }
 
 /* Стиль «палец»: своя рука-указатель вместо кольца */
-.fc-hand { opacity: 0; transition: opacity .15s; }
+.fc-hand { opacity: 0; }
 .fc-hand svg {
   display: block; position: absolute;
-  width: 28px; height: 28px;
+  width: 20px; height: 24px;
   /* кончик пальца ровно в точке мыши; вращение вокруг него. Размер как у системной руки */
-  left: calc(28px * -13.5 / 32); top: calc(28px * -2 / 32);
-  transform-origin: 42.2% 6.25%;
-  filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.3));
-  transform: scale(.6);
-  transition: transform .25s cubic-bezier(.3, 1.6, .5, 1);
+  left: -7px; top: -0.5px;
+  transform-origin: 7px 0.5px;
+  transform: none;
 }
 #fc-root.fc-style-hand .fc-ring, #fc-root.fc-style-hand .fc-dot { opacity: 0; }
 #fc-root.fc-style-hand .fc-hand { opacity: 1; }
-#fc-root.fc-style-hand.fc-link .fc-hand svg { transform: scale(1); }
-#fc-root.fc-style-hand.fc-down .fc-hand svg { transform: scale(.82); transition-duration: .08s; }
 #fc-root.fc-style-hand.fc-text .fc-hand { opacity: 0; }
 #fc-root.fc-style-hand.fc-text .fc-dot { opacity: 1; }
 
