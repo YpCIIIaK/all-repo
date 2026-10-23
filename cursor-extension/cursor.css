@@ -1,0 +1,90 @@
+/* Системный курсор прячем только когда наш включён и мышь над страницей */
+html.fc-on, html.fc-on * { cursor: none !important; }
+
+#fc-root {
+  display: block; position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 2147483647;
+  contain: strict;
+}
+
+.fc-dot, .fc-ring, .fc-ripple {
+  display: block; padding: 0;
+  position: fixed; top: 0; left: 0;
+  pointer-events: none;
+  will-change: transform;
+  box-sizing: border-box;
+}
+
+.fc-dot {
+  width: 6px; height: 6px; margin: -3px 0 0 -3px;
+  border-radius: 3px;
+  background: var(--fc-color);
+  transition: width .18s, height .18s, margin .18s, border-radius .18s, opacity .18s;
+}
+
+.fc-ring {
+  width: var(--fc-size); height: var(--fc-size);
+  margin: calc(var(--fc-size) / -2) 0 0 calc(var(--fc-size) / -2);
+  border: 2px solid var(--fc-color);
+  border-radius: 50%;
+  transition: width .22s, height .22s, margin .22s, border-radius .22s,
+              background-color .22s, opacity .22s, border-width .22s;
+}
+
+/* Наведение на ссылку или кнопку: кольцо раздувается и подсвечивается */
+#fc-root.fc-link .fc-ring {
+  --fc-big: calc(var(--fc-size) * 1.9);
+  width: var(--fc-big); height: var(--fc-big);
+  margin: calc(var(--fc-big) / -2) 0 0 calc(var(--fc-big) / -2);
+  background-color: color-mix(in srgb, var(--fc-color) 18%, transparent);
+}
+#fc-root.fc-link .fc-dot { opacity: 0; }
+
+/* Текстовое поле: свой текстовый курсор — тонкая вертикальная черта с засечками */
+#fc-root.fc-text .fc-ring { opacity: 0; }
+#fc-root.fc-text .fc-dot {
+  width: 2px; height: var(--fc-text-h, 20px);
+  margin: calc(var(--fc-text-h, 20px) / -2) 0 0 -1px;
+  border-radius: 1px;
+}
+#fc-root.fc-text .fc-dot::before,
+#fc-root.fc-text .fc-dot::after {
+  content: ""; position: absolute; left: -3px;
+  width: 8px; height: 2px; border-radius: 1px;
+  background: var(--fc-color);
+}
+#fc-root.fc-text .fc-dot::before { top: 0; }
+#fc-root.fc-text .fc-dot::after { bottom: 0; }
+
+/* Зажатая кнопка мыши */
+#fc-root.fc-down .fc-ring { border-width: 3px; }
+#fc-root.fc-down:not(.fc-text) .fc-dot { width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 5px; }
+
+/* Стиль «только точка» */
+#fc-root.fc-style-dot .fc-ring { opacity: 0; }
+#fc-root.fc-style-dot:not(.fc-text) .fc-dot { width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 5px; }
+#fc-root.fc-style-dot.fc-link:not(.fc-text) .fc-dot {
+  opacity: 1; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 11px;
+}
+
+/* Стиль «инверсия»: круг меняет цвета под собой */
+#fc-root.fc-style-blend .fc-ring {
+  border: none; background: #fff; mix-blend-mode: difference;
+}
+#fc-root.fc-style-blend.fc-link .fc-ring { background: #fff; }
+#fc-root.fc-style-blend:not(.fc-text) .fc-dot { opacity: 0; }
+
+/* Курсор ушёл за пределы окна */
+#fc-root.fc-hidden .fc-dot, #fc-root.fc-hidden .fc-ring { opacity: 0; }
+
+.fc-ripple {
+  width: 10px; height: 10px; margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  border: 2px solid var(--fc-color);
+  animation: fc-ripple .5s ease-out forwards;
+}
+@keyframes fc-ripple {
+  from { transform: var(--fc-at) scale(1); opacity: .8; }
+  to   { transform: var(--fc-at) scale(6); opacity: 0; }
+}

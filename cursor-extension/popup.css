@@ -1,0 +1,45 @@
+:root {
+  --bg: #fff; --fg: #1c1c22; --muted: #6b6b78; --line: #e4e4ea; --accent: #7c5cff;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #18181d; --fg: #ececf1; --muted: #9a9aa8; --line: #2c2c35; }
+}
+* { box-sizing: border-box; }
+body {
+  width: 260px; margin: 0; padding: 14px;
+  font: 13px/1.4 system-ui, sans-serif;
+  background: var(--bg); color: var(--fg);
+}
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+h1 { font-size: 15px; margin: 0; }
+section { margin: 10px 0; }
+.row { display: flex; align-items: center; justify-content: space-between; }
+.label { margin-bottom: 6px; }
+output { color: var(--muted); font-variant-numeric: tabular-nums; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+input[type="color"] { width: 40px; height: 24px; border: 1px solid var(--line); border-radius: 6px; padding: 0; background: none; }
+
+.seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button {
+  flex: 1; padding: 6px 0; border: 0; background: none; color: var(--fg); font: inherit; cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: #fff; }
+
+.switch { position: relative; width: 36px; height: 20px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span {
+  position: absolute; inset: 0; border-radius: 10px; background: var(--line); cursor: pointer; transition: background .2s;
+}
+.switch span::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff; transition: transform .2s;
+}
+.switch input:checked + span { background: var(--accent); }
+.switch input:checked + span::after { transform: translateX(16px); }
+
+.reset {
+  width: 100%; margin-top: 6px; padding: 7px; border: 1px solid var(--line); border-radius: 8px;
+  background: none; color: var(--muted); font: inherit; cursor: pointer;
+}
