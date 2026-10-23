@@ -23,8 +23,8 @@
   const HAND_SVG = '<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">' +
     '<path d="M11 15V4.5a2.5 2.5 0 0 1 5 0V12a2.5 2.5 0 0 1 5 0v1a2.5 2.5 0 0 1 5 0v1.5a2.3 2.3 0 0 1 4 1.5V21' +
     'c0 6-4 10-9.5 10H18c-4 0-6-1.8-8.2-5L5.3 19.6a2.3 2.3 0 0 1 3.6-2.9L11 19Z" ' +
-    'fill="var(--fc-color)" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>' +
-    '<path d="M16 12v6M21 13v5M26 14.5v3.5" stroke="#fff" stroke-width="1.3" stroke-linecap="round" opacity=".7"/></svg>';
+    'fill="#fff" stroke="#000" stroke-width="1.5" stroke-linejoin="round"/>' +
+    '<path d="M16 12v6M21 13v5M26 14.5v3.5" stroke="#000" stroke-width="1.2" stroke-linecap="round"/></svg>';
 
   function build() {
     root = document.createElement('div');
@@ -167,11 +167,13 @@
     ring.style.transform = `translate3d(${rx}px, ${ry}px, 0) rotate(${ang.toFixed(1)}deg) scale(${(1 + st).toFixed(3)}, ${(1 - st * 0.6).toFixed(3)})`;
     if (linkEl) applyTilt();
 
-    // Палец: наклоняется в сторону движения и качается на пружине
+    // Палец качается как маятник: движение мыши его толкает,
+    // дальше он сам раскачивается туда-сюда и постепенно затухает
     const mdx = mx - lastMx; lastMx = mx;
-    const target = reducedMotion.matches ? 0 : Math.max(-35, Math.min(35, mdx * 2.2));
-    hVel = (hVel + (target - hAng) * 0.2) * 0.72;
-    hAng += hVel;
+    if (!reducedMotion.matches) hVel += Math.max(-4, Math.min(4, mdx * 0.09));
+    hVel = (hVel - hAng * 0.045) * 0.93;
+    hAng = Math.max(-16, Math.min(16, hAng + hVel));
+    if (reducedMotion.matches) hAng = hVel = 0;
     hand.style.transform = `translate3d(${mx}px, ${my}px, 0) rotate(${hAng.toFixed(2)}deg)`;
 
     // Пока кольцо не догнало мышь, продолжаем анимацию, потом засыпаем

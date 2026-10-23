@@ -79,11 +79,11 @@ html.fc-on, html.fc-on * { cursor: none !important; }
 .fc-hand { opacity: 0; transition: opacity .15s; }
 .fc-hand svg {
   display: block; position: absolute;
-  width: calc(var(--fc-size) * 1.15); height: calc(var(--fc-size) * 1.15);
-  /* кончик пальца ровно в точке мыши; вращение вокруг него */
-  left: calc(var(--fc-size) * 1.15 * -13.5 / 32); top: calc(var(--fc-size) * 1.15 * -2 / 32);
+  width: 28px; height: 28px;
+  /* кончик пальца ровно в точке мыши; вращение вокруг него. Размер как у системной руки */
+  left: calc(28px * -13.5 / 32); top: calc(28px * -2 / 32);
   transform-origin: 42.2% 6.25%;
-  filter: drop-shadow(0 2px 3px rgba(0,0,0,.35));
+  filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.3));
   transform: scale(.6);
   transition: transform .25s cubic-bezier(.3, 1.6, .5, 1);
 }
