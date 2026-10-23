@@ -108,6 +108,27 @@
     return Math.round(Math.min(Math.max(fs * 1.25, 14), 48));
   }
 
+  // Какой курсор сайт хотел бы показать над элементом. Пока наш курсор активен,
+  // на странице стоит cursor: none, поэтому на миг снимаем его, чтобы прочитать настоящий
+  function siteCursor(el) {
+    const html = document.documentElement;
+    const on = html.classList.contains('fc-on');
+    if (on) html.classList.remove('fc-on');
+    const c = getComputedStyle(el).cursor;
+    if (on) html.classList.add('fc-on');
+    return c;
+  }
+
+  // Элемент, над которым должна быть рука: ссылки и кнопки, а также всё,
+  // чему сайт сам поставил cursor: pointer (div-кнопки, карточки и т. п.)
+  function pointerTarget(el) {
+    if (!el.closest) return null;
+    const c = siteCursor(el);
+    if (c === 'pointer') return el.closest(LINK_SEL) || el;
+    if (c !== 'auto') return null;   // сайт явно просит другой курсор — не мешаем
+    return el.closest(LINK_SEL);
+  }
+
   function onOver(e) {
     if (!cfg.enabled) return;
     const t = e.composedPath ? e.composedPath()[0] : e.target;
@@ -123,7 +144,7 @@
     }
     root.classList.remove('fc-text');
     const prev = linkEl;
-    linkEl = el.closest ? el.closest(LINK_SEL) : null;
+    linkEl = pointerTarget(el);
     root.classList.toggle('fc-link', !!linkEl);
     if (linkEl && !prev && cfg.mode === 'hover') { rx = mx; ry = my; vx = vy = 0; }
     if (!linkEl) untilt();
