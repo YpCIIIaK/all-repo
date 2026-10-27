@@ -48,7 +48,49 @@ const DELIVERY_MAX_SEC = Number(E('SMS_DELIVERY_MS', '2000-10000').split('-').po
 // Длительный прогон (MODE=soak): ровный поток SOAK_RATE голосов/с весь тест — ищем то, что копится со временем.
 const SOAK_RATE = N('SOAK_RATE', 10);
 const PHASES = ['start', 'middle', 'end'];
-const PEAK_RATE = MODE === 'stress' ? stressRates[stressRates.length - 1] : MODE === 'soak' ? SOAK_RATE : profile.peak;
+// Наплывы (MODE=surge): ровный фон BASE_RATE голосов/с и всплески из SURGES:
+// "старт_с:во_сколько_раз:длительность_с:разгон_с,…" — время от начала теста, разгон и спад одинаковые.
+const BASE_RATE = N('BASE_RATE', 9.26);
+const RECOVERY_SEC = N('RECOVERY_SEC', 60);
+const surges = E('SURGES', '')
+  .split(',')
+  .filter(Boolean)
+  .map((part) => {
+    const [at, x, dur, ramp = 1] = part.split(':').map(Number);
+    return { at, x, dur, ramp: Math.max(1, ramp) };
+  })
+  .sort((a, b) => a.at - b.at);
+const WINDOWS = ['base', 'surge', 'recovery'];
+
+/** Отрезок теста: наплыв (с разгоном и спадом), первая минута после него или фон. */
+function surgeWindow(t) {
+  if (surges.some((s) => t >= s.at && t < s.at + 2 * s.ramp + s.dur)) return 'surge';
+  if (surges.some((s) => t >= s.at + 2 * s.ramp + s.dur && t < s.at + 2 * s.ramp + s.dur + RECOVERY_SEC)) return 'recovery';
+  return 'base';
+}
+
+function surgeStages() {
+  const points = [[0, BASE_RATE]];
+  for (const s of surges) {
+    points.push([s.at, BASE_RATE], [s.at + s.ramp, BASE_RATE * s.x], [s.at + s.ramp + s.dur, BASE_RATE * s.x], [s.at + 2 * s.ramp + s.dur, BASE_RATE]);
+  }
+  points.push([DURATION_SEC, BASE_RATE]);
+  const stages = [];
+  for (let i = 1; i < points.length; i++) {
+    const sec = Math.round(points[i][0] - points[i - 1][0]);
+    if (sec > 0) stages.push({ target: Math.round(points[i][1] * 60), duration: `${sec}s` });
+  }
+  return stages;
+}
+
+const PEAK_RATE =
+  MODE === 'stress'
+    ? stressRates[stressRates.length - 1]
+    : MODE === 'soak'
+      ? SOAK_RATE
+      : MODE === 'surge'
+        ? BASE_RATE * Math.max(1, ...surges.map((s) => s.x))
+        : profile.peak;
 const PREALLOCATED_VUS = Math.min(MAX_VUS, Math.ceil(PEAK_RATE * (DELIVERY_MAX_SEC / SCALE + 3)));
 
 // --- метрики ---
@@ -103,6 +145,16 @@ if (MODE === 'soak') {
   }
 }
 
+// Наплывы: цифры по отрезкам «фон», «наплыв», «минута после» — решение принимает verify.
+if (MODE === 'surge') {
+  for (const w of WINDOWS) {
+    thresholds[`user_success{window:${w}}`] = ['rate>=0'];
+    thresholds[`voters_started{window:${w}}`] = ['count>=0'];
+    thresholds[`sms_wait{window:${w}}`] = ['p(95)>=0'];
+    for (const op of ['requestCode', 'verifyCode', 'castVote']) thresholds[`http_req_duration{op:${op},window:${w}}`] = ['p(95)>=0'];
+  }
+}
+
 const perMinute = (realPerMin) => Math.max(1, Math.round(realPerMin * SCALE));
 
 const stressScenarios = {
@@ -132,6 +184,17 @@ const soakVoters = {
   gracefulStop: `${Math.ceil(PATIENCE_SEC * 2 + RETRY_WINDOW_SEC * 3)}s`,
 };
 
+const surgeVoters = {
+  executor: 'ramping-arrival-rate',
+  exec: 'voter',
+  startRate: Math.round(BASE_RATE * 60),
+  timeUnit: '1m',
+  stages: MODE === 'surge' ? surgeStages() : [],
+  preAllocatedVUs: PREALLOCATED_VUS,
+  maxVUs: MAX_VUS,
+  gracefulStop: `${Math.ceil(PATIENCE_SEC * 2 + RETRY_WINDOW_SEC * 3)}s`,
+};
+
 export const options = {
   insecureSkipTLSVerify: true, // самоподписанный сертификат тестового nginx
   noVUConnectionReuse: true, // каждый избиратель — новое соединение и TLS-рукопожатие, как в жизни
@@ -139,7 +202,7 @@ export const options = {
   setupTimeout: '2m',
   thresholds,
   scenarios: MODE === 'stress' ? stressScenarios : {
-    voters: MODE === 'soak' ? soakVoters : {
+    voters: MODE === 'soak' ? soakVoters : MODE === 'surge' ? surgeVoters : {
       executor: 'ramping-arrival-rate',
       exec: 'voter',
       startRate: 0,
@@ -256,6 +319,13 @@ const randomCandidate = () => 1 + Math.floor(Math.random() * CANDIDATES);
 
 export function setup() {
   http.post(`${SMS}/control/start`);
+  if (MODE === 'surge') {
+    console.log(
+      `Наплывы: фон ${BASE_RATE.toFixed(1)} голосов/с; ` +
+        surges.map((s) => `с ${s.at} с ×${s.x} (${(BASE_RATE * s.x).toFixed(0)}/с) на ${s.dur} с, разгон ${s.ramp} с`).join('; '),
+    );
+    return;
+  }
   if (MODE === 'stress') {
     console.log(`Стресс: ${stressRates.map((r) => r.toFixed(0)).join(' → ')} голосов/с, по ${STRESS_STEP_SEC} с на ступень.`);
     return;
@@ -273,6 +343,7 @@ export function voter() {
     exec.vu.metrics.tags.step = String(Math.min(step, STRESS_STEPS - 1));
   }
   tagPhase();
+  if (MODE === 'surge') exec.vu.metrics.tags.window = surgeWindow(exec.instance.currentTestRunDuration / 1000);
   const phone = `+7900${pad(exec.scenario.iterationInTest, 7)}`;
   const started = Date.now();
   votersStarted.add(1);

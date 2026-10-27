@@ -7,6 +7,7 @@
 #   ./run.sh stress <сценарий>            предел сервера: поток растёт ступенями до отказа (~9 минут)
 #   ./run.sh soak <сценарий> [длительность]  ровная средняя нагрузка: утечки памяти, замедление с ростом базы
 #   ./run.sh bench                        скорость одного ядра — запустите и на VPS, чтобы пересчитать результаты
+#   ./run.sh surge <сценарий> [вариант|all]  наплывы в разное время и разной силы, по 10 минут в реальном времени
 #
 # Любой параметр сценария можно переопределить переменной окружения:
 #   TOTAL_VOTES=2000 ./run.sh realistic 3m
@@ -212,18 +213,45 @@ run_soak() {
     run_one "$scenario" "$duration" )
 }
 
+# Варианты наплывов: имя|SURGES|описание. SURGES — «старт_с:во_сколько_раз:длительность_с:разгон_с,…»
+# поверх фона (средний поток дня). Каждый вариант — 10 минут в реальном времени.
+SURGE_VARIANTS=(
+  "sudden10|120:10:180:1|Резкий наплыв ×10 за секунду, 3 минуты (разослали ссылку — все открыли сразу)"
+  "big15|120:15:120:10|Наплыв ×15 на 2 минуты (выше расчётного пика дня)"
+  "huge20|120:20:60:5|Наплыв ×20 на минуту (выше предела 2 ядер — как быстро сервер придёт в себя)"
+  "frequent|60:10:20:2,180:10:20:2,300:10:20:2,420:10:20:2|Частые короткие наплывы ×10 по 20 секунд каждые 2 минуты"
+  "long5|60:5:420:30|Долгий наплыв ×5 на 7 минут (вечерний поток, а не всплеск)"
+)
+
+run_surge() {
+  local scenario="$1" want="${2:-all}" status=0 found=0 item name spec title
+  for item in "${SURGE_VARIANTS[@]}"; do
+    IFS='|' read -r name spec title <<< "$item"
+    [ "$want" = all ] || [ "$want" = "$name" ] || continue
+    found=1
+    ( load_scenario "$scenario"
+      export MODE=surge CHAOS= SMS_OUTAGE_SEC=0 SURGES="$spec" SURGE_NAME="$name" SURGE_TITLE="$title"
+      export BASE_RATE="${BASE_RATE:-$(awk "BEGIN { print ${TOTAL_VOTES} / 10800 }")}"
+      export REAL_DURATION_SEC=600
+      run_one "$scenario" 600s ) || status=1
+  done
+  [ "$found" = 1 ] || die "нет варианта «$want»: $(printf '%s\n' "${SURGE_VARIANTS[@]}" | cut -d'|' -f1 | tr '\n' ' ')"
+  return $status
+}
+
 # Всё в функции: bash разбирает её целиком до запуска, поэтому правка run.sh во время теста ничего не сломает.
 main() {
 case "${1:-}" in
   plan) shift; plan "$@" ;;
   stress) [ -n "${2:-}" ] || die "укажите сценарий: ./run.sh stress realistic"; run_stress "$2" ;;
   soak) [ -n "${2:-}" ] || die "укажите сценарий: ./run.sh soak realistic 30m"; run_soak "$2" "${3:-30m}" ;;
+  surge) [ -n "${2:-}" ] || die "укажите сценарий: ./run.sh surge realistic [вариант|all]"; run_surge "$2" "${3:-all}"; exit $? ;;
   bench) echo "Скорость одного ядра: $(bench 0) (больше — быстрее). Запустите то же на VPS и сравните." ;;
   all)
     status=0
     for s in optimistic realistic pessimistic; do run_one "$s" "${2:-30m}" || status=1; done
     exit $status ;;
-  ''|-h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  ''|-h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) run_one "$1" "${2:-30m}" ;;
 esac
 }

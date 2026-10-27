@@ -308,10 +308,69 @@ async function main() {
     });
   }
 
+  // Наплывы: фон, сам наплыв и первая минута после — выдержал ли сервер и как быстро пришёл в себя.
+  const surgeMode = env('MODE') === 'surge';
+  const surgeLines: string[] = [];
+  if (surgeMode) {
+    const baseRate = Number(env('BASE_RATE', '9.26'));
+    const durationSec = Number(env('DURATION_SEC', '600'));
+    const surges = env('SURGES')
+      .split(',')
+      .filter(Boolean)
+      .map((p) => {
+        const [at, x, dur, ramp = 1] = p.split(':').map(Number);
+        return { at, x, dur, ramp: Math.max(1, ramp) };
+      });
+    const windowOf = (t: number) =>
+      surges.some((s) => t >= s.at && t < s.at + 2 * s.ramp + s.dur)
+        ? 'surge'
+        : surges.some((s) => t >= s.at + 2 * s.ramp + s.dur && t < s.at + 2 * s.ramp + s.dur + 60)
+          ? 'recovery'
+          : 'base';
+    const seconds: Record<string, number> = { base: 0, surge: 0, recovery: 0 };
+    for (let t = 0; t < durationSec; t++) seconds[windowOf(t)]++;
+
+    const successMin = Number(env('SUCCESS_MIN', '0.99'));
+    const p95Max = Number(env('API_P95_MS', '800'));
+    surgeLines.push(
+      `${env('SURGE_TITLE')}`.trim(),
+      '',
+      `Фон — ${baseRate.toFixed(1)} голосов/с. ` +
+        surges
+          .map((s) => `Через ${Math.round(s.at / 60)} мин — ×${s.x} (${(baseRate * s.x).toFixed(0)} голосов/с) на ${s.dur} с, разгон ${s.ramp} с`)
+          .join('; ') +
+        '.',
+      '',
+      '| Отрезок | Голосов/с | Проголосовали | p95 запроса кода | p95 подтверждения | p95 голоса | Ожидание СМС, p95 | Держит |',
+      '|---|---|---|---|---|---|---|---|',
+    );
+    const labels: Record<string, string> = { base: 'Фон', surge: 'Во время наплыва', recovery: 'Первая минута после' };
+    let surgeOk = true;
+    for (const w of ['base', 'surge', 'recovery']) {
+      if (!seconds[w]) continue;
+      const started = metric(summary, `voters_started{window:${w}}`, 'count');
+      const success = metric(summary, `user_success{window:${w}}`, 'value');
+      const p95 = ['requestCode', 'verifyCode', 'castVote'].map((op) => metric(summary, `http_req_duration{op:${op},window:${w}}`, 'p(95)'));
+      const holds = success >= successMin && p95.every((v) => v < p95Max);
+      if (!holds) surgeOk = false;
+      surgeLines.push(
+        `| ${labels[w]} | ${(started / seconds[w]).toFixed(0)} | ${(success * 100).toFixed(1)} % | ${p95.map(fmtMs).join(' | ')} | ` +
+          `${fmtMs(metric(summary, `sms_wait{window:${w}}`, 'p(95)'))} | ${holds ? '✅' : '❌'} |`,
+      );
+    }
+    checks.push({
+      name: 'Наплыв выдержан',
+      ok: surgeOk,
+      details: surgeOk
+        ? `и во время наплыва, и после него проголосовали не меньше ${(successMin * 100).toFixed(0)} %, p95 меньше ${fmtMs(p95Max)}`
+        : 'см. таблицу «Наплывы»: на каком отрезке не уложились',
+    });
+  }
+
   const ok = checks.every((c) => c.ok || c.warnOnly);
   const scaleNote = timeScale > 1 ? ` (≈ ${fmtMs(smsWaitP95 * timeScale)} в реальном времени при ускорении ×${timeScale})` : '';
   const report = [
-    `# ${ok ? '✅ PASS' : '❌ FAIL'} — ${stress ? 'стресс-тест' : soak ? 'длительный прогон' : 'сценарий'} «${env('SCENARIO', '?')}»`,
+    `# ${ok ? '✅ PASS' : '❌ FAIL'} — ${stress ? 'стресс-тест' : soak ? 'длительный прогон' : surgeMode ? `наплыв «${env('SURGE_NAME')}»` : 'сценарий'} «${env('SCENARIO', '?')}»`,
     '',
     `Длительность ${env('DURATION', '?')} (ускорение ×${timeScale}), цель ${fmtInt(Number(env('TOTAL_VOTES', '0')))} голосов, ` +
       `сеть: ${env('NET_EMULATION', 'нет данных')}.`,
@@ -329,6 +388,7 @@ async function main() {
     '',
     ...(stress ? ['## Предел сервера (стресс)', '', ...stressLines, ''] : []),
     ...(soak ? ['## Длительный прогон: задержки и память во времени', '', ...soakLines, ''] : []),
+    ...(surgeMode ? ['## Наплывы', '', ...surgeLines, ''] : []),
     '## Пользователи',
     '',
     `| Начали голосовать | Проголосовали | Доля | Не дождались СМС | Не запущены k6 |`,
