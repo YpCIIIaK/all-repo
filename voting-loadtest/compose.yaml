@@ -1,0 +1,202 @@
+# Стенд нагрузочного теста. Обычно запускается через ./run.sh <сценарий> <длительность>,
+# который подставляет переменные из scenarios/*.env. Наружу порты не публикуются:
+# k6 ходит к серверу внутри сети Docker, поэтому несколько стендов могут работать одновременно (-p).
+#
+# VPS имитируется так: все контейнеры сервера закреплены за SERVER_CPUS ядрами (cpuset) и делят их
+# свободно, как процессы на настоящем VPS. k6, прокси сети и заглушка СМС — на остальных ядрах, чтобы
+# генератор нагрузки не отнимал процессор у сервера. Ядра распределяет run.sh.
+# *_CPUS у отдельных контейнеров по умолчанию 0 — без лимита внутри общего набора ядер.
+
+x-app: &app
+  build: ./app
+  environment: &app-env
+    DATABASE_URL: postgresql://vote:vote@db:5432/vote?schema=public&connection_limit=${DB_POOL:-10}
+    REDIS_URL: redis://redis:6379
+    SMS_PROVIDER_URL: http://sms-mock:8080
+    TOKEN_SECRET: ${TOKEN_SECRET:-load-test-secret}
+    TIME_SCALE: ${TIME_SCALE:-1}
+    CANDIDATES: ${CANDIDATES:-5}
+    SMS_RATE: ${SMS_RATE:-20}
+    SMS_CONCURRENCY: ${SMS_CONCURRENCY:-50}
+    OTP_TTL_SEC: ${OTP_TTL_SEC:-300}
+    OTP_RESEND_SEC: ${OTP_RESEND_SEC:-60}
+    OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-5}
+    RESULTS_CACHE_SEC: ${RESULTS_CACHE_SEC:-2}
+  cpuset: ${SERVER_CPUSET:-}
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vote
+      POSTGRES_PASSWORD: vote
+      POSTGRES_DB: vote
+    command: postgres -c max_connections=200 -c shared_buffers=${DB_SHARED_BUFFERS:-128MB}
+    cpus: ${DB_CPUS:-0}
+    mem_limit: ${DB_MEM:-1g}
+    cpuset: ${SERVER_CPUSET:-}
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vote -d vote"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    # appendonly: очередь СМС переживает перезапуск Redis, как в продакшене
+    command: redis-server --appendonly yes --appendfsync everysec
+    cpus: ${REDIS_CPUS:-0}
+    mem_limit: 256m
+    cpuset: ${SERVER_CPUSET:-}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    <<: *app
+    command: ["npx", "prisma", "migrate", "deploy"]
+    restart: "no"
+    depends_on:
+      db: { condition: service_healthy }
+
+  api:
+    <<: *app
+    command: ["node", "dist/src/main.js"]
+    deploy:
+      replicas: ${API_REPLICAS:-2}
+    cpus: ${API_CPUS:-0}
+    mem_limit: ${API_MEM:-512m}
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  worker:
+    <<: *app
+    command: ["node", "dist/src/worker.js"]
+    cpus: ${WORKER_CPUS:-0}
+    mem_limit: 256m
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  sms-mock:
+    image: node:20-alpine
+    command: ["node", "/sms/server.mjs"]
+    volumes:
+      - ./sms-mock:/sms:ro
+    environment:
+      TIME_SCALE: ${TIME_SCALE:-1}
+      DURATION_SEC: ${DURATION_SEC:-10800}
+      SMS_RATE: ${SMS_RATE:-20}
+      SMS_ERROR_RATE: ${SMS_ERROR_RATE:-0.02}
+      SMS_API_LATENCY_MS: ${SMS_API_LATENCY_MS:-50-300}
+      SMS_DELIVERY_MS: ${SMS_DELIVERY_MS:-2000-10000}
+      SMS_OUTAGE_AT: ${SMS_OUTAGE_AT:-0}
+      SMS_OUTAGE_SEC: ${SMS_OUTAGE_SEC:-0}
+    cpuset: ${CLIENT_CPUSET:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  nginx:
+    build: ./nginx
+    cpus: ${NGINX_CPUS:-0}
+    mem_limit: 128m
+    cpuset: ${SERVER_CPUSET:-}
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_healthy }
+
+  # Запасная имитация сети (если в ядре нет netem): k6 → netdelay → nginx. Используется автоматически.
+  netdelay:
+    image: node:20-alpine
+    command: ["node", "/netdelay/server.mjs"]
+    volumes:
+      - ./netdelay:/netdelay:ro
+    environment:
+      TARGET: nginx:443
+      NET_DELAY_MS: ${NET_DELAY_MS:-0}
+      NET_JITTER_MS: ${NET_JITTER_MS:-0}
+      NET_LOSS_PCT: ${NET_LOSS_PCT:-0}
+    cpuset: ${CLIENT_CPUSET:-}
+    depends_on:
+      nginx: { condition: service_started }
+
+  # --- запускаются через `docker compose run`, в `up` не входят ---
+
+  k6:
+    build: ./k6
+    profiles: ["tools"]
+    cap_add: [NET_ADMIN]
+    cpuset: ${CLIENT_CPUSET:-}
+    volumes:
+      - ./k6:/scripts:ro
+      - ${RESULTS_DIR:-./results/latest}:/results
+    environment:
+      NETWORK_MODE: ${NETWORK_MODE:-auto}
+      MODE: ${MODE:-profile}
+      STRESS_FROM: ${STRESS_FROM:-25}
+      STRESS_TO: ${STRESS_TO:-400}
+      STRESS_STEPS: ${STRESS_STEPS:-8}
+      STRESS_STEP_SEC: ${STRESS_STEP_SEC:-60}
+      SMS_URL: http://sms-mock:8080
+      TIME_SCALE: ${TIME_SCALE:-1}
+      DURATION_SEC: ${DURATION_SEC:-10800}
+      TOTAL_VOTES: ${TOTAL_VOTES:-100000}
+      CANDIDATES: ${CANDIDATES:-5}
+      PEAK_X: ${PEAK_X:-10}
+      SPIKE_FRAC: ${SPIKE_FRAC:-0.02}
+      RAMP_FRAC: ${RAMP_FRAC:-0.01}
+      MAX_VUS: ${MAX_VUS:-4000}
+      SMS_PATIENCE_SEC: ${SMS_PATIENCE_SEC:-180}
+      SMS_DELIVERY_MS: ${SMS_DELIVERY_MS:-2000-10000}
+      RETRY_WINDOW_SEC: ${RETRY_WINDOW_SEC:-60}
+      DOUBLE_VOTE_SHARE: ${DOUBLE_VOTE_SHARE:-0.01}
+      VIEWERS_PER_SEC: ${VIEWERS_PER_SEC:-5}
+      BRUTEFORCE_PER_MIN: ${BRUTEFORCE_PER_MIN:-2}
+      SPAM_PER_MIN: ${SPAM_PER_MIN:-2}
+      SUCCESS_MIN: ${SUCCESS_MIN:-0.99}
+      API_P95_MS: ${API_P95_MS:-800}
+      SMS_WAIT_P95_SEC: ${SMS_WAIT_P95_SEC:-120}
+      NET_DELAY_MS: ${NET_DELAY_MS:-0}
+      NET_JITTER_MS: ${NET_JITTER_MS:-0}
+      NET_LOSS_PCT: ${NET_LOSS_PCT:-0}
+      K6_NO_USAGE_REPORT: "true"
+    depends_on:
+      netdelay: { condition: service_started }
+      sms-mock: { condition: service_healthy }
+
+  verify:
+    <<: *app
+    profiles: ["tools"]
+    command: ["node", "dist/src/verify.js"]
+    volumes:
+      - ${RESULTS_DIR:-./results/latest}:/results
+    environment:
+      <<: *app-env
+      SCENARIO: ${SCENARIO:-}
+      DURATION: ${DURATION:-}
+      TOTAL_VOTES: ${TOTAL_VOTES:-100000}
+      K6_EXIT: ${K6_EXIT:-0}
+      NET_EMULATION: ${NET_EMULATION:-}
+      SERVER_CPUSET: ${SERVER_CPUSET:-}
+      CLIENT_CPUSET: ${CLIENT_CPUSET:-}
+      MODE: ${MODE:-profile}
+      STRESS_FROM: ${STRESS_FROM:-25}
+      STRESS_TO: ${STRESS_TO:-400}
+      STRESS_STEPS: ${STRESS_STEPS:-8}
+      SUCCESS_MIN: ${SUCCESS_MIN:-0.99}
+      API_P95_MS: ${API_P95_MS:-800}
+      PEAK_X: ${PEAK_X:-10}

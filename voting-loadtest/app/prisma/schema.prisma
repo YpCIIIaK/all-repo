@@ -1,0 +1,48 @@
+// Голосование с подтверждением по СМС.
+// Один человек — один голос: это гарантирует уникальный индекс (pollId, voterId),
+// а не проверка «уже голосовал?» в коде, — проверку в коде обходят параллельные запросы.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Voter {
+  id         Int       @id @default(autoincrement())
+  phone      String    @unique
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+  codes      OtpCode[]
+  votes      Vote[]
+}
+
+/// Код из СМС. В базе только хэш; срок жизни считается от sentAt — момента фактической отправки,
+/// а не от запроса: при отставании очереди код не должен приходить уже просроченным.
+model OtpCode {
+  id        Int       @id @default(autoincrement())
+  voterId   Int
+  codeHash  String
+  createdAt DateTime  @default(now())
+  sentAt    DateTime?
+  usedAt    DateTime?
+  voter     Voter     @relation(fields: [voterId], references: [id], onDelete: Cascade)
+
+  @@index([voterId, id])
+}
+
+model Vote {
+  id          Int      @id @default(autoincrement())
+  pollId      Int
+  voterId     Int
+  candidateId Int
+  createdAt   DateTime @default(now())
+  voter       Voter    @relation(fields: [voterId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, voterId])
+  @@index([pollId, candidateId])
+}
