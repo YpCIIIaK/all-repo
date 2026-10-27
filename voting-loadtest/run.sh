@@ -5,10 +5,13 @@
 #   ./run.sh <сценарий> [длительность]    прогон: optimistic | realistic | pessimistic, длительность 3h, 30m, 10m, 90s
 #   ./run.sh all [длительность]           три сценария по очереди
 #   ./run.sh stress <сценарий>            предел сервера: поток растёт ступенями до отказа (~9 минут)
+#   ./run.sh soak <сценарий> [длительность]  ровная средняя нагрузка: утечки памяти, замедление с ростом базы
+#   ./run.sh bench                        скорость одного ядра — запустите и на VPS, чтобы пересчитать результаты
 #
 # Любой параметр сценария можно переопределить переменной окружения:
 #   TOTAL_VOTES=2000 ./run.sh realistic 3m
 #   KEEP=1 ./run.sh realistic 10m          не останавливать стенд после теста
+#   SEED_VOTES=1000000 ./run.sh stress realistic   перед тестом залить в базу миллион голосов
 set -uo pipefail
 cd "$(dirname "$0")"
 
@@ -47,14 +50,35 @@ plan() {
   fi
 }
 
-# Пиковая загрузка каждого контейнера: CPU в % от одного ядра, память.
+# Загрузка контейнеров раз в несколько секунд: время;контейнер;CPU в % от одного ядра;память.
 sample_stats() {
   local project="$1" out="$2"
   while :; do
     docker stats --no-stream --format '{{.Name}};{{.CPUPerc}};{{.MemUsage}}' \
-      $(docker ps -q --filter "label=com.docker.compose.project=$project") >> "$out" 2>/dev/null
+      $(docker ps -q --filter "label=com.docker.compose.project=$project") 2>/dev/null \
+      | awk -v t="$(date +%s)" '{ print t ";" $0 }' >> "$out"
     sleep 3
   done
+}
+
+# Скорость одного ядра (scripts/bench.mjs). Отношение результатов на VPS и здесь — коэффициент пересчёта.
+bench() {
+  docker run --rm --cpuset-cpus "${1:-0}" -v "$PWD/scripts":/s:ro node:20-alpine node /s/bench.mjs
+}
+
+# Перед тестом — SEED_VOTES подтверждённых избирателей с голосами (номера +7800…), как в конце большого дня.
+seed() {
+  local project="$1" n="${SEED_VOTES:-0}"
+  [ "$n" -gt 0 ] 2>/dev/null || return 0
+  echo "Заливаю в базу $n избирателей с голосами…"
+  local started=$SECONDS
+  docker compose -p "$project" exec -T db psql -q -v ON_ERROR_STOP=1 -U vote -d vote <<SQL || die "не удалось заполнить базу"
+INSERT INTO "Voter" ("phone", "verifiedAt") SELECT '+7800' || lpad(g::text, 8, '0'), now() FROM generate_series(1, $n) g;
+INSERT INTO "OtpCode" ("voterId", "codeHash", "sentAt", "usedAt") SELECT id, 'seed', now(), now() FROM "Voter" WHERE "phone" LIKE '+7800%';
+INSERT INTO "Vote" ("pollId", "voterId", "candidateId") SELECT 1, id, 1 + id % 5 FROM "Voter" WHERE "phone" LIKE '+7800%';
+VACUUM ANALYZE;
+SQL
+  echo "Готово за $(( SECONDS - started )) с."
 }
 
 # CHAOS="worker@0.5,db@0.97": на такой доле длительности теста убить службу (kill -9, как при падении)
@@ -77,7 +101,11 @@ chaos() {
 # Ядра: сервер (имитация VPS) — первые SERVER_CPUS ядер Docker, k6, прокси сети и заглушка СМС — остальные.
 # Если ядер мало, сервер получает сколько можно, но генератору нагрузки остаётся хотя бы одно.
 split_cpus() {
-  [ -n "${SERVER_CPUSET:-}" ] && return
+  if [ -n "${SERVER_CPUSET:-}" ]; then
+    # Число ядер в наборе вида 0-3,6
+    export SERVER_CORES; SERVER_CORES=$(echo "$SERVER_CPUSET" | tr ',' '\n' | awk -F- '{ n += ($2 == "" ? 1 : $2 - $1 + 1) } END { print n }')
+    return
+  fi
   local n want; n=$(docker info --format '{{.NCPU}}' 2>/dev/null || echo 0); want="${SERVER_CPUS:-2}"
   if [ "$n" -lt 2 ]; then
     echo "Внимание: Docker видит $n ядро — сервер и k6 будут делить его, цифры будут занижены." >&2
@@ -87,6 +115,7 @@ split_cpus() {
     echo "Внимание: сценарий просит $want ядер под сервер, а Docker видит $n — даю $(( n - 1 )), одно остаётся k6." >&2
     want=$(( n - 1 ))
   fi
+  export SERVER_CORES="$want"
   local server="0-$(( want - 1 ))" client="$want-$(( n - 1 ))"
   [ "$want" -eq 1 ] && server=0
   [ "$want" -eq $(( n - 1 )) ] && client=$want
@@ -105,11 +134,15 @@ run_one() {
   mkdir -p "$RESULTS_DIR" && chmod 777 "$RESULTS_DIR"
   split_cpus
   local dc=(docker compose -p "$project" --profile tools)
+  export PROJECT_NAME="$project"
 
   echo "== Сценарий $scenario: $duration (ускорение ×$TIME_SCALE), результаты: $RESULTS_DIR"
   "${dc[@]}" down -v --remove-orphans >/dev/null 2>&1
   "${dc[@]}" build -q || die "сборка образов не удалась"
+  export BENCH_SCORE; BENCH_SCORE=$(bench "${SERVER_CPUSET%%[-,]*}")
+  echo "Скорость ядра здесь: $BENCH_SCORE (./run.sh bench)."
   docker compose -p "$project" up -d --wait || { "${dc[@]}" logs --no-color > "$RESULTS_DIR/logs.txt"; die "стенд не поднялся, логи в $RESULTS_DIR/logs.txt"; }
+  seed "$project"
 
   echo "Сервер на ядрах ${SERVER_CPUSET:-любых}, k6 и заглушка СМС на ядрах ${CLIENT_CPUSET:-любых}."
   echo "Тест идёт $duration, окончание около $(date -d "+$DURATION_SEC sec" +%H:%M 2>/dev/null || date -v+"$DURATION_SEC"S +%H:%M)."
@@ -136,7 +169,7 @@ run_one() {
     echo "|---|---|---|"
     awk -F';' -v p="$project-" '
       function mib(s,  v) { v = s + 0; if (s ~ /GiB/) v *= 1024; else if (s ~ /KiB/) v /= 1024; else if (s ~ /^[0-9.]+B/) v /= 1048576; return v }
-      { name=$1; sub(p, "", name); cpu=$2; sub(/%/, "", cpu); split($3, m, " / ");
+      { name=$2; sub(p, "", name); cpu=$3; sub(/%/, "", cpu); split($4, m, " / ");
         if (cpu+0 > maxcpu[name]) maxcpu[name]=cpu+0; if (mib(m[1]) > mem[name]) mem[name]=mib(m[1]) }
       END { for (n in maxcpu) printf "| %s | %.0f %% | %.0f МБ |\n", n, maxcpu[n], mem[n] }' "$RESULTS_DIR/stats.csv" | sort
     if [ -s "$RESULTS_DIR/chaos.log" ]; then echo; echo "## Сбои во время теста"; echo; sed 's/^/    /' "$RESULTS_DIR/chaos.log"; fi
@@ -168,16 +201,29 @@ run_stress() {
     run_one "$scenario" "${total}s" )
 }
 
+# Длительный прогон: ровный средний поток (по умолчанию TOTAL_VOTES / 3 ч) в реальном времени, без сбоев.
+# Ищем то, что копится со временем: рост памяти, замедление по мере роста базы.
+run_soak() {
+  local scenario="$1" duration="${2:-30m}"
+  ( load_scenario "$scenario"
+    export MODE=soak CHAOS= SMS_OUTAGE_SEC=0
+    export SOAK_RATE="${SOAK_RATE:-$(awk "BEGIN { print ${TOTAL_VOTES} / 10800 }")}"
+    export REAL_DURATION_SEC; REAL_DURATION_SEC=$(to_sec "$duration")
+    run_one "$scenario" "$duration" )
+}
+
 # Всё в функции: bash разбирает её целиком до запуска, поэтому правка run.sh во время теста ничего не сломает.
 main() {
 case "${1:-}" in
   plan) shift; plan "$@" ;;
   stress) [ -n "${2:-}" ] || die "укажите сценарий: ./run.sh stress realistic"; run_stress "$2" ;;
+  soak) [ -n "${2:-}" ] || die "укажите сценарий: ./run.sh soak realistic 30m"; run_soak "$2" "${3:-30m}" ;;
+  bench) echo "Скорость одного ядра: $(bench 0) (больше — быстрее). Запустите то же на VPS и сравните." ;;
   all)
     status=0
     for s in optimistic realistic pessimistic; do run_one "$s" "${2:-30m}" || status=1; done
     exit $status ;;
-  ''|-h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
+  ''|-h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) run_one "$1" "${2:-30m}" ;;
 esac
 }

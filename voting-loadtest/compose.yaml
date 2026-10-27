@@ -150,6 +150,7 @@ services:
       MODE: ${MODE:-profile}
       STRESS_RATES: ${STRESS_RATES:-}
       STRESS_STEP_SEC: ${STRESS_STEP_SEC:-45}
+      SOAK_RATE: ${SOAK_RATE:-10}
       SMS_URL: http://sms-mock:8080
       TIME_SCALE: ${TIME_SCALE:-1}
       DURATION_SEC: ${DURATION_SEC:-10800}
@@ -194,6 +195,11 @@ services:
       CLIENT_CPUSET: ${CLIENT_CPUSET:-}
       MODE: ${MODE:-profile}
       STRESS_RATES: ${STRESS_RATES:-}
+      BENCH_SCORE: ${BENCH_SCORE:-}
+      VPS_BENCH: ${VPS_BENCH:-}
+      VPS_CPUS: ${VPS_CPUS:-}
+      SERVER_CORES: ${SERVER_CORES:-}
+      PROJECT_NAME: ${PROJECT_NAME:-}
       SUCCESS_MIN: ${SUCCESS_MIN:-0.99}
       API_P95_MS: ${API_P95_MS:-800}
       PEAK_X: ${PEAK_X:-10}

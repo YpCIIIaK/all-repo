@@ -45,7 +45,10 @@ const RETRY_WINDOW_SEC = scaled(N('RETRY_WINDOW_SEC', 60), 5);
 const MAX_VUS = N('MAX_VUS', 4000);
 // VU создаются заранее: пока k6 создаёт их на ходу, он пропускает запуски пользователей на пиках.
 const DELIVERY_MAX_SEC = Number(E('SMS_DELIVERY_MS', '2000-10000').split('-').pop()) / 1000;
-const PEAK_RATE = MODE === 'stress' ? stressRates[stressRates.length - 1] : profile.peak;
+// Длительный прогон (MODE=soak): ровный поток SOAK_RATE голосов/с весь тест — ищем то, что копится со временем.
+const SOAK_RATE = N('SOAK_RATE', 10);
+const PHASES = ['start', 'middle', 'end'];
+const PEAK_RATE = MODE === 'stress' ? stressRates[stressRates.length - 1] : MODE === 'soak' ? SOAK_RATE : profile.peak;
 const PREALLOCATED_VUS = Math.min(MAX_VUS, Math.ceil(PEAK_RATE * (DELIVERY_MAX_SEC / SCALE + 3)));
 
 // --- метрики ---
@@ -91,6 +94,15 @@ if (MODE === 'stress') {
   }
 }
 
+// В длительном прогоне сравниваем треть начала, середины и конца: не замедляется ли сервер по мере роста базы.
+if (MODE === 'soak') {
+  for (const phase of PHASES) {
+    for (const op of ['requestCode', 'verifyCode', 'castVote', 'results']) {
+      thresholds[`http_req_duration{op:${op},phase:${phase}}`] = ['p(95)>=0'];
+    }
+  }
+}
+
 const perMinute = (realPerMin) => Math.max(1, Math.round(realPerMin * SCALE));
 
 const stressScenarios = {
@@ -109,6 +121,17 @@ const stressScenarios = {
   },
 };
 
+const soakVoters = {
+  executor: 'constant-arrival-rate',
+  exec: 'voter',
+  rate: Math.max(1, Math.round(SOAK_RATE * 60)),
+  timeUnit: '1m',
+  duration: `${DURATION_SEC}s`,
+  preAllocatedVUs: PREALLOCATED_VUS,
+  maxVUs: MAX_VUS,
+  gracefulStop: `${Math.ceil(PATIENCE_SEC * 2 + RETRY_WINDOW_SEC * 3)}s`,
+};
+
 export const options = {
   insecureSkipTLSVerify: true, // самоподписанный сертификат тестового nginx
   noVUConnectionReuse: true, // каждый избиратель — новое соединение и TLS-рукопожатие, как в жизни
@@ -116,7 +139,7 @@ export const options = {
   setupTimeout: '2m',
   thresholds,
   scenarios: MODE === 'stress' ? stressScenarios : {
-    voters: {
+    voters: MODE === 'soak' ? soakVoters : {
       executor: 'ramping-arrival-rate',
       exec: 'voter',
       startRate: 0,
@@ -217,6 +240,13 @@ function waitSms(phone, since) {
 
 const pad = (n, len) => String(n).padStart(len, '0');
 
+/** Тег трети теста (начало, середина, конец) — для сравнения задержек в длительном прогоне. */
+function tagPhase() {
+  if (MODE !== 'soak') return;
+  const third = Math.floor((exec.instance.currentTestRunDuration / 1000 / DURATION_SEC) * 3);
+  exec.vu.metrics.tags.phase = PHASES[Math.min(2, Math.max(0, third))];
+}
+
 /** Неудача избирателя с причиной: на каком шаге он отвалился. */
 function fail(reason) {
   voterFailures.add(1, { reason });
@@ -242,6 +272,7 @@ export function voter() {
     const step = Math.floor(exec.instance.currentTestRunDuration / 1000 / (STRESS_RAMP_SEC + STRESS_STEP_SEC));
     exec.vu.metrics.tags.step = String(Math.min(step, STRESS_STEPS - 1));
   }
+  tagPhase();
   const phone = `+7900${pad(exec.scenario.iterationInTest, 7)}`;
   const started = Date.now();
   votersStarted.add(1);
@@ -294,6 +325,7 @@ export function voter() {
 }
 
 export function viewer() {
+  tagPhase();
   gql('results', RESULTS, {});
 }
 

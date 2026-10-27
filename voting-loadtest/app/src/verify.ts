@@ -15,6 +15,7 @@ const env = (name: string, fallback = '') => process.env[name] ?? fallback;
 const summaryFile = env('SUMMARY_FILE', '/results/summary.json');
 const reportFile = env('REPORT_FILE', '/results/report.md');
 const timeScale = Number(env('TIME_SCALE', '1'));
+const SEED_PREFIX = '+7800';
 
 function metric(summary: Summary, name: string, field: string): number {
   const value = summary.metrics[name]?.[field];
@@ -36,6 +37,49 @@ function failedThresholds(summary: Summary): string[] {
 const fmtMs = (ms: number) => (ms >= 10_000 ? `${(ms / 1000).toFixed(0)} с` : ms >= 1000 ? `${(ms / 1000).toFixed(1)} с` : `${ms.toFixed(0)} мс`);
 const fmtInt = (n: number) => Math.round(n).toLocaleString('ru-RU');
 
+/**
+ * Тренд памяти по stats.csv (время;контейнер;CPU;память). Первые 20 % времени — разогрев (куча Node
+ * выходит на рабочий размер), не учитываются. Дальше: средняя память в середине и в конце и наклон прямой
+ * по методу наименьших квадратов, МБ в час.
+ */
+type Trend = { name: string; middleMb: number; endMb: number; mbPerHour: number; minutes: number };
+function memoryTrends(file: string, project: string): Trend[] {
+  let text = '';
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return [];
+  }
+  const mib = (s: string) => {
+    const v = parseFloat(s);
+    return /GiB/.test(s) ? v * 1024 : /KiB/.test(s) ? v / 1024 : /^[\d.]+B/.test(s) ? v / 1048576 : v;
+  };
+  const series = new Map<string, { t: number; mb: number }[]>();
+  for (const line of text.split('\n')) {
+    const [t, rawName, , mem] = line.split(';');
+    if (!mem || rawName.includes('-run-')) continue;
+    const name = rawName.replace(`${project}-`, '');
+    const list = series.get(name) ?? [];
+    list.push({ t: Number(t), mb: mib(mem.split(' / ')[0]) });
+    series.set(name, list);
+  }
+  const out: Trend[] = [];
+  for (const [name, all] of series) {
+    if (all.length < 10) continue;
+    const t0 = all[0].t;
+    const span = all[all.length - 1].t - t0;
+    const pts = all.filter((p) => p.t - t0 >= span * 0.2);
+    const n = pts.length;
+    const mx = pts.reduce((a, p) => a + p.t, 0) / n;
+    const my = pts.reduce((a, p) => a + p.mb, 0) / n;
+    const slope = pts.reduce((a, p) => a + (p.t - mx) * (p.mb - my), 0) / Math.max(1e-9, pts.reduce((a, p) => a + (p.t - mx) ** 2, 0));
+    const avg = (arr: typeof pts) => arr.reduce((a, p) => a + p.mb, 0) / Math.max(1, arr.length);
+    const half = Math.max(1, Math.floor(n / 2));
+    out.push({ name, middleMb: avg(pts.slice(0, half)), endMb: avg(pts.slice(half)), mbPerHour: slope * 3600, minutes: span / 60 });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 async function waitForQueue(queue: Queue, timeoutMs: number): Promise<{ pending: number; failed: number }> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -52,9 +96,13 @@ async function main() {
   const queue = new Queue(SMS_QUEUE, { connection: redisConnection() });
 
   const queueState = await waitForQueue(queue, 60_000);
-  const [dbTotal] = await prisma.$queryRaw<{ n: number }[]>`SELECT count(*)::int AS n FROM "Vote"`;
+  // Заранее залитые голоса (SEED_VOTES, номера +7800…) в сверку с клиентами не входят.
+  const [dbTotal] = await prisma.$queryRaw<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM "Vote" v JOIN "Voter" p ON p.id = v."voterId" WHERE p.phone NOT LIKE ${SEED_PREFIX + '%'}`;
   const perCandidate = await prisma.$queryRaw<{ candidateId: number; n: number }[]>`
-    SELECT "candidateId", count(*)::int AS n FROM "Vote" GROUP BY "candidateId" ORDER BY "candidateId"`;
+    SELECT "candidateId", count(*)::int AS n FROM "Vote" v JOIN "Voter" p ON p.id = v."voterId"
+    WHERE p.phone NOT LIKE ${SEED_PREFIX + '%'} GROUP BY "candidateId" ORDER BY "candidateId"`;
+  const [allVotes] = await prisma.$queryRaw<{ n: number }[]>`SELECT count(*)::int AS n FROM "Vote"`;
   const [unverified] = await prisma.$queryRaw<{ n: number }[]>`
     SELECT count(*)::int AS n FROM "Vote" v JOIN "Voter" p ON p.id = v."voterId" WHERE p."verifiedAt" IS NULL`;
   const [duplicates] = await prisma.$queryRaw<{ n: number }[]>`
@@ -174,8 +222,35 @@ async function main() {
         : breaksAt !== null && breaksAt <= peakNeeded
           ? `не хватает: предел меньше ${breaksAt}`
           : `запас под вопросом — пик между ступенями ${capacity} и ${breaksAt}, уточните STRESS_RATES`;
+    // Пересчёт на VPS: предел ∝ число ядер × скорость ядра (сервер упирается в процессор).
+    const bench = Number(env('BENCH_SCORE', '0'));
+    const cores = Number(env('SERVER_CORES', '0'));
+    const vpsBench = Number(env('VPS_BENCH', '0'));
+    const vpsCpus = Number(env('VPS_CPUS', '0'));
+    const perCoreUnit = bench && cores ? capacity / cores / bench : 0; // голосов/с на ядро на единицу скорости
+    const vpsLines: string[] = [];
+    if (perCoreUnit) {
+      vpsLines.push(
+        `Здесь: ${cores} ядр${cores === 1 ? 'о' : 'а'} со скоростью ${fmtInt(bench)} (\`./run.sh bench\`) — ` +
+          `${(capacity / cores).toFixed(0)} голосов/с на ядро.`,
+      );
+      if (vpsBench && vpsCpus) {
+        const vps = perCoreUnit * vpsBench * vpsCpus;
+        vpsLines.push(
+          `**На VPS (${vpsCpus} ядр${vpsCpus === 1 ? 'о' : 'а'}, скорость ${fmtInt(vpsBench)}): ≈ ${vps.toFixed(0)} голосов/с — ` +
+            (vps >= peakNeeded * 1.5 ? `запас ×${(vps / peakNeeded).toFixed(1)}, достаточно.**` : vps >= peakNeeded ? `запас ×${(vps / peakNeeded).toFixed(1)}, меньше рекомендуемых ×1,5.**` : `не хватает в ${(peakNeeded / vps).toFixed(1)} раза.**`),
+        );
+      } else {
+        vpsLines.push(
+          `Чтобы пересчитать на свой VPS, запустите там \`./run.sh bench\` и передайте результат: ` +
+            `\`VPS_BENCH=<число> VPS_CPUS=<ядер>\`. Оценка: голосов/с ≈ ${perCoreUnit.toExponential(3)} × скорость × ядер.`,
+        );
+      }
+    }
     stressLines.unshift(
       `**Сервер ${limit}.** На пике голосования нужно ${peakNeeded.toFixed(0)} голосов/с — ${verdict}.`,
+      '',
+      ...vpsLines.flatMap((l) => [l, '']),
       '',
       `«Держит» — доля успешных не ниже ${(successMin * 100).toFixed(0)} % и p95 каждого запроса меньше ${fmtMs(p95Max)}. ` +
         'Задержки включают имитацию сети сценария.',
@@ -187,13 +262,62 @@ async function main() {
     }
   }
 
+  // Длительный прогон: задержки в начале, середине и конце + тренд памяти.
+  const soak = env('MODE') === 'soak';
+  const soakLines: string[] = [];
+  if (soak) {
+    const phases: [string, string][] = [['start', 'Первая треть'], ['middle', 'Середина'], ['end', 'Последняя треть']];
+    soakLines.push('| Время | p95 requestCode | p95 verifyCode | p95 castVote | p95 results |', '|---|---|---|---|---|');
+    for (const [phase, label] of phases) {
+      const p95 = ['requestCode', 'verifyCode', 'castVote', 'results'].map((op) => metric(summary, `http_req_duration{op:${op},phase:${phase}}`, 'p(95)'));
+      soakLines.push(`| ${label} | ${p95.map(fmtMs).join(' | ')} |`);
+    }
+    const first = metric(summary, 'http_req_duration{op:castVote,phase:start}', 'p(95)');
+    const last = metric(summary, 'http_req_duration{op:castVote,phase:end}', 'p(95)');
+    const slowdown = first > 0 ? last / first : 1;
+    checks.push({
+      name: 'Сервер не замедляется к концу',
+      ok: slowdown < 1.5,
+      details: `p95 castVote: ${fmtMs(first)} в начале → ${fmtMs(last)} в конце (×${slowdown.toFixed(2)})`,
+    });
+
+    const trends = memoryTrends('/results/stats.csv', env('PROJECT_NAME'));
+    soakLines.push(
+      '',
+      'Память после разогрева (первые 20 % времени не учитываются): средняя в первой и второй половине, наклон.',
+      '',
+      '| Контейнер | Первая половина | Вторая половина | Тренд |',
+      '|---|---|---|---|',
+    );
+    const leaks: string[] = [];
+    for (const t of trends) {
+      soakLines.push(`| ${t.name} | ${t.middleMb.toFixed(0)} МБ | ${t.endMb.toFixed(0)} МБ | ${t.mbPerHour >= 0 ? '+' : ''}${t.mbPerHour.toFixed(0)} МБ/ч |`);
+      // Утечка у процессов приложения: вторая половина заметно больше первой (≥ 10 МБ и ≥ 10 %) и наклон > 20 МБ/ч.
+      // База и Redis не проверяются: их память растёт вместе с данными, это нормально.
+      const growth = t.endMb - t.middleMb;
+      if (/^(api|worker|nginx)-/.test(t.name) && growth > Math.max(10, 0.1 * t.middleMb) && t.mbPerHour > 20) leaks.push(t.name);
+    }
+    const minutes = trends[0]?.minutes ?? 0;
+    checks.push({
+      name: 'Нет утечек памяти в API, воркере и nginx',
+      ok: leaks.length === 0,
+      warnOnly: minutes < 15,
+      details:
+        (leaks.length ? `растёт память: ${leaks.join(', ')}` : 'память после разогрева ровная') +
+        (minutes < 15 ? ` (прогон ${minutes.toFixed(0)} мин — для вывода об утечках нужно от 15–30 минут)` : ''),
+    });
+  }
+
   const ok = checks.every((c) => c.ok || c.warnOnly);
   const scaleNote = timeScale > 1 ? ` (≈ ${fmtMs(smsWaitP95 * timeScale)} в реальном времени при ускорении ×${timeScale})` : '';
   const report = [
-    `# ${ok ? '✅ PASS' : '❌ FAIL'} — ${stress ? 'стресс-тест' : 'сценарий'} «${env('SCENARIO', '?')}»`,
+    `# ${ok ? '✅ PASS' : '❌ FAIL'} — ${stress ? 'стресс-тест' : soak ? 'длительный прогон' : 'сценарий'} «${env('SCENARIO', '?')}»`,
     '',
     `Длительность ${env('DURATION', '?')} (ускорение ×${timeScale}), цель ${fmtInt(Number(env('TOTAL_VOTES', '0')))} голосов, ` +
       `сеть: ${env('NET_EMULATION', 'нет данных')}.`,
+    '',
+    `В базе к концу теста ${fmtInt(allVotes.n)} голосов` +
+      (allVotes.n > total ? `, из них ${fmtInt(allVotes.n - total)} залиты заранее (SEED_VOTES), в сверку с клиентами не входят.` : '.'),
     '',
     `Ядра: сервер — ${env('SERVER_CPUSET') || 'все (не закреплён)'}, k6 и заглушки — ${env('CLIENT_CPUSET') || 'все'}.`,
     '',
@@ -204,6 +328,7 @@ async function main() {
     ...checks.map((c) => `| ${c.ok ? '✅' : c.warnOnly ? '⚠️' : '❌'} | ${c.name} | ${c.details} |`),
     '',
     ...(stress ? ['## Предел сервера (стресс)', '', ...stressLines, ''] : []),
+    ...(soak ? ['## Длительный прогон: задержки и память во времени', '', ...soakLines, ''] : []),
     '## Пользователи',
     '',
     `| Начали голосовать | Проголосовали | Доля | Не дождались СМС | Не запущены k6 |`,
