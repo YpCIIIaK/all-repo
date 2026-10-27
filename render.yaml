@@ -1,0 +1,28 @@
+# Деплой на Render одной кнопкой: New → Blueprint → этот репозиторий, ветка cv-graphql.
+services:
+  - type: web
+    name: cv-graphql
+    runtime: docker
+    plan: free
+    branch: cv-graphql
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cv-graphql-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: cv-graphql-cache
+          property: connectionString
+
+  - type: keyvalue
+    name: cv-graphql-cache
+    plan: free
+    ipAllowList: []
+
+databases:
+  - name: cv-graphql-db
+    plan: free
+    postgresMajorVersion: "16"

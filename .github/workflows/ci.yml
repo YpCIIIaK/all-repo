@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [cv-graphql]
+  pull_request:
+    branches: [cv-graphql]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cv
+          POSTGRES_PASSWORD: cv
+          POSTGRES_DB: cv_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cv -d cv_test" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://cv:cv@localhost:5432/cv_test?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npx prisma migrate deploy
+      - run: npm run test:e2e
+      - run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t cv-graphql .

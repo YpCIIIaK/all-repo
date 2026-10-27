@@ -1,0 +1,217 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+type Achievement {
+  id: ID!
+  text: String!
+}
+
+type CategoryCount {
+  category: SkillCategory!
+  count: Int!
+}
+
+"""
+A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+"""
+scalar DateTime
+
+type Education {
+  id: ID!
+  institution: String!
+  status: String!
+}
+
+enum EmploymentKind {
+  CONTRACT
+  FULL_TIME
+  INTERNSHIP
+  STARTUP
+}
+
+type Experience {
+  achievements: [Achievement!]!
+  company: String!
+  endedOn: DateTime
+  id: ID!
+  kind: EmploymentKind!
+
+  """Период как в резюме, например «2026 — н.в.»"""
+  periodLabel: String!
+
+  """Должность"""
+  role: String!
+  skills: [Skill!]!
+  slug: String!
+  startedOn: DateTime
+}
+
+"""Стаж без двойного счёта пересекающихся периодов"""
+type ExperienceSpan {
+  months: Int!
+  ongoing: Boolean!
+
+  """Периоды без точных дат, не вошедшие в расчёт"""
+  periodsWithoutDates: Int!
+  totalMonths: Int!
+  years: Int!
+}
+
+type Link {
+  id: ID!
+  kind: LinkKind!
+  label: String!
+  url: String!
+}
+
+enum LinkKind {
+  EMAIL
+  GITHUB
+  LINKEDIN
+  TELEGRAM
+  WEBSITE
+}
+
+type PageInfo {
+  endCursor: String
+  hasNextPage: Boolean!
+}
+
+type Profile {
+  availability: String!
+  education: [Education!]!
+  experience: [Experience!]!
+  headline: String!
+  id: ID!
+  languages: String!
+  links: [Link!]!
+  location: String!
+  name: String!
+  projects: [Project!]!
+  skills(category: SkillCategory): [Skill!]!
+  slug: String!
+  stats(top: Int! = 8): ProfileStats!
+  summary: String!
+  timezone: String!
+
+  """Общий стаж без двойного счёта пересечений"""
+  totalExperience: ExperienceSpan!
+  updatedAt: DateTime!
+}
+
+type ProfileStats {
+  achievements: Int!
+  projects: Int!
+  skills: Int!
+  skillsByCategory: [CategoryCount!]!
+
+  """Самые используемые навыки"""
+  topSkills: [SkillUsage!]!
+}
+
+type Project {
+  demoUrl: String
+  featured: Boolean!
+  highlights: [ProjectHighlight!]!
+  id: ID!
+  name: String!
+  repoUrl: String!
+  skills: [Skill!]!
+  slug: String!
+  summary: String!
+}
+
+"""Страница проектов (keyset-пагинация в стиле Relay)"""
+type ProjectConnection {
+  edges: [ProjectEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type ProjectEdge {
+  cursor: String!
+  node: Project!
+}
+
+type ProjectHighlight {
+  id: ID!
+  text: String!
+}
+
+type Query {
+  """Профиль со всеми связанными данными"""
+  profile(slug: String! = "vladimir"): Profile!
+
+  """Проекты постранично, с фильтром по навыку"""
+  projects(
+    after: String
+    featured: Boolean
+    first: Int! = 5
+    profile: String! = "vladimir"
+
+    """
+    slug навыка, например "nestjs"
+    """
+    skill: String
+  ): ProjectConnection!
+
+  """Полнотекстовый поиск по проектам и достижениям"""
+  search(limit: Int! = 10, profile: String! = "vladimir", query: String!): [SearchHit!]!
+
+  """Навык и всё, где он применялся"""
+  skill(profile: String! = "vladimir", slug: String!): Skill!
+
+  """Подсказки навыков с допуском опечаток"""
+  suggestSkills(limit: Int! = 5, prefix: String!, profile: String! = "vladimir"): [SkillSuggestion!]!
+}
+
+type SearchHit {
+  id: ID!
+
+  """PROJECT или ACHIEVEMENT"""
+  kind: String!
+  rank: Float!
+
+  """Фрагмент с подсветкой совпадений <b>…</b>"""
+  snippet: String!
+  title: String!
+}
+
+type Skill {
+  category: SkillCategory!
+
+  """Места работы, где применялся навык"""
+  experience: [Experience!]!
+  id: ID!
+  name: String!
+
+  """Проекты, где применялся навык"""
+  projects: [Project!]!
+  slug: String!
+}
+
+"""Группа навыков"""
+enum SkillCategory {
+  AI
+  BACKEND
+  CMS
+  DATABASE
+  FRONTEND
+  INFRA
+  INTEGRATION
+  LANGUAGE
+}
+
+type SkillSuggestion {
+  """Похожесть по триграммам, 0..1"""
+  score: Float!
+  skill: Skill!
+}
+
+type SkillUsage {
+  skill: Skill!
+
+  """В скольких проектах и местах работы применялся"""
+  usageCount: Int!
+}

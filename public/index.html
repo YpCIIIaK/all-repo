@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Владимир · CV GraphQL API</title>
+<meta name="description" content="Цифровая визитка Владимира: GraphQL API на NestJS, Prisma и PostgreSQL.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpolygon points='50,6 90,28 90,72 50,94 10,72 10,28' fill='%23e535ab'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0b0b12; --panel: #12121c; --panel2: #171724; --line: rgba(255,255,255,.09);
+    --fg: #ececf4; --muted: #9b9bb2; --pink: #e535ab; --violet: #8b5cf6; --sky: #38bdf8; --green: #34d399;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) { --bg: #f7f7fb; --panel: #fff; --panel2: #f1f1f7; --line: rgba(15,15,40,.1); --fg: #16161f; --muted: #5d5d73; }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: inherit; }
+  code { font-family: var(--mono); font-size: .92em; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+  .glow { position: fixed; inset: -20% -10% auto; height: 70vh; pointer-events: none; z-index: -1;
+    background: radial-gradient(600px 300px at 20% 30%, rgba(229,53,171,.18), transparent 70%),
+                radial-gradient(500px 280px at 80% 10%, rgba(56,189,248,.14), transparent 70%); }
+  header { display: flex; align-items: center; gap: 12px; padding: 18px 0; }
+  .logo { width: 34px; height: 34px; }
+  header nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; color: var(--muted); }
+  header nav a { text-decoration: none; } header nav a:hover { color: var(--fg); }
+  .hero { padding: 56px 0 40px; }
+  .badge { display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--line); background: var(--panel); border-radius: 99px; padding: 4px 12px; font-size: 12.5px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.6); } 70% { box-shadow: 0 0 0 8px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
+  h1 { font-size: clamp(2.2rem, 6vw, 3.8rem); line-height: 1.05; letter-spacing: -.02em; margin: 18px 0 0; }
+  .grad { background: linear-gradient(100deg, var(--pink), var(--violet) 50%, var(--sky)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lead { max-width: 640px; color: var(--muted); font-size: 17px; margin: 18px 0 0; }
+  .cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 99px; padding: 11px 20px; font-weight: 600; font-size: 14px; text-decoration: none; border: 1px solid var(--line); background: var(--panel); cursor: pointer; color: var(--fg); }
+  .btn.primary { border: 0; color: #fff; background: linear-gradient(100deg, var(--pink), var(--violet)); box-shadow: 0 8px 30px rgba(229,53,171,.3); }
+  .btn:hover { filter: brightness(1.08); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 30px; }
+  .chip { font-size: 12.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 3px 11px; background: var(--panel); }
+  section { padding: 44px 0; }
+  h2 { font-size: 26px; letter-spacing: -.01em; margin: 0 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 22px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .card { border: 1px solid var(--line); background: var(--panel); border-radius: 18px; padding: 18px; transition: transform .2s, border-color .2s; }
+  .card:hover { transform: translateY(-2px); border-color: rgba(229,53,171,.4); }
+  .card h3 { margin: 0 0 6px; font-size: 15.5px; }
+  .card p { margin: 0; color: var(--muted); font-size: 13.5px; }
+  .card .tag { display: inline-block; font: 11px var(--mono); color: var(--pink); margin-bottom: 8px; }
+  .play { display: grid; gap: 14px; grid-template-columns: 260px 1fr; }
+  @media (max-width: 760px) { .play { grid-template-columns: 1fr; } header nav { display: none; } }
+  .tabs { display: flex; flex-direction: column; gap: 6px; }
+  .tab { text-align: left; border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 12px; padding: 10px 12px; cursor: pointer; font: inherit; font-size: 13.5px; }
+  .tab small { display: block; color: var(--muted); font-size: 12px; }
+  .tab[aria-selected="true"] { border-color: var(--pink); background: linear-gradient(100deg, rgba(229,53,171,.12), rgba(139,92,246,.08)); }
+  .editor { border: 1px solid var(--line); border-radius: 18px; background: var(--panel); overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+  .bar { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
+  .bar .sp { margin-left: auto; }
+  .bar button { border: 1px solid var(--line); background: var(--panel2); color: var(--fg); border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 12.5px; }
+  .bar button.run { background: linear-gradient(100deg, var(--pink), var(--violet)); border: 0; color: #fff; font-weight: 600; }
+  textarea { width: 100%; min-height: 190px; resize: vertical; border: 0; outline: none; background: transparent; color: var(--fg); font: 13px/1.55 var(--mono); padding: 14px; }
+  pre { margin: 0; max-height: 360px; overflow: auto; padding: 14px; font: 12.5px/1.55 var(--mono); border-top: 1px solid var(--line); background: var(--panel2); white-space: pre-wrap; word-break: break-word; }
+  .k { color: var(--sky); } .s { color: var(--green); } .n { color: #f59e0b; } .b { color: var(--violet); }
+  .arch { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13.5px; }
+  .node { border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 10px 14px; }
+  .node b { display: block; font-size: 13px; } .node span { color: var(--muted); font-size: 12px; }
+  .arrow { color: var(--muted); }
+  footer { border-top: 1px solid var(--line); padding: 26px 0 40px; color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+</style>
+</head>
+<body>
+<div class="glow"></div>
+<div class="wrap">
+  <header>
+    <svg class="logo" viewBox="0 0 100 100" aria-hidden="true"><polygon points="50,6 90,28 90,72 50,94 10,72 10,28" fill="none" stroke="url(#g)" stroke-width="7"/><circle cx="50" cy="50" r="12" fill="url(#g)"/><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#e535ab"/><stop offset="1" stop-color="#38bdf8"/></linearGradient></defs></svg>
+    <b>CV GraphQL API</b>
+    <nav><a href="#try">Попробовать</a><a href="#inside">Что внутри</a><a href="#arch">Архитектура</a><a href="https://github.com/YpCIIIaK/all-repo/tree/cv-graphql">Код</a></nav>
+  </header>
+
+  <div class="hero">
+    <span class="badge"><span class="dot"></span><span id="health">Проверяю API…</span></span>
+    <h1>Владимир<br><span class="grad">Fullstack-разработчик</span></h1>
+    <p class="lead">Моя визитка в виде GraphQL API: профиль, опыт, навыки и проекты лежат в PostgreSQL, а получить их можно одним запросом — со всеми связями, поиском и пагинацией.</p>
+    <div class="cta">
+      <a class="btn primary" href="/graphql">Открыть Apollo Sandbox →</a>
+      <a class="btn" href="#try">Выполнить запрос здесь</a>
+      <a class="btn" href="https://github.com/YpCIIIaK/all-repo/tree/cv-graphql">Исходный код</a>
+    </div>
+    <div class="chips">
+      <span class="chip">NestJS</span><span class="chip">GraphQL · Apollo</span><span class="chip">Prisma</span><span class="chip">PostgreSQL 16</span><span class="chip">Full-text search</span><span class="chip">pg_trgm</span><span class="chip">DataLoader</span><span class="chip">Redis</span><span class="chip">Docker</span><span class="chip">Jest e2e</span>
+    </div>
+  </div>
+
+  <section id="try">
+    <h2>Попробуйте прямо здесь</h2>
+    <p class="sub">Выберите пример или напишите свой запрос — он уйдёт в настоящий <code>/graphql</code>. Ctrl+Enter — выполнить.</p>
+    <div class="play">
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <div class="editor">
+        <div class="bar"><span>query</span><span class="sp"></span><button id="copy">Копировать</button><button class="run" id="run">▶ Выполнить</button></div>
+        <textarea id="query" spellcheck="false" aria-label="GraphQL-запрос"></textarea>
+        <pre id="out" aria-live="polite">// результат появится здесь</pre>
+      </div>
+    </div>
+  </section>
+
+  <section id="inside">
+    <h2>Что внутри</h2>
+    <p class="sub">Демонстрация работы с базой данных, а не только CRUD.</p>
+    <div class="grid">
+      <div class="card"><span class="tag">DataLoader</span><h3>Вложенные данные без N+1</h3><p>Любая глубина связей стоит один SQL-запрос на тип связи. Тест проверяет: +20 проектов — то же число запросов.</p></div>
+      <div class="card"><span class="tag">tsvector + GIN</span><h3>Полнотекстовый поиск</h3><p>Русская и английская морфология, ранжирование ts_rank и подсветка ts_headline. Если все слова не нашлись — мягкий режим.</p></div>
+      <div class="card"><span class="tag">pg_trgm</span><h3>Подсказки с опечатками</h3><p>«opensaerch» → OpenSearch. Совпадения по началу слова идут первыми, потом похожие по триграммам.</p></div>
+      <div class="card"><span class="tag">keyset</span><h3>Пагинация без OFFSET</h3><p>Курсор по (position, id): цена страницы не растёт с её номером, записи не задваиваются.</p></div>
+      <div class="card"><span class="tag">GROUP BY</span><h3>Статистика в базе</h3><p>Частота навыков по проектам и местам работы считается агрегатами PostgreSQL, а не перебором в Node.</p></div>
+      <div class="card"><span class="tag">upsert</span><h3>Идемпотентный сид</h3><p>База сама заполняется при старте. Повторный запуск ничего не дублирует, а неизменённые данные пропускает по хэшу версии.</p></div>
+      <div class="card"><span class="tag">Redis</span><h3>Кэш и лимиты</h3><p>Cache-aside с версией данных и ограничение частоты запросов. Без Redis API работает как обычно.</p></div>
+      <div class="card"><span class="tag">HR-tech</span><h3>Уже делал в продакшене</h3><p>Keyset, идемпотентная загрузка, частотные подсказки и подсчёт стажа перенесены из поиска по базе 15+ млн профилей.</p></div>
+    </div>
+  </section>
+
+  <section id="arch">
+    <h2>Архитектура</h2>
+    <p class="sub">Резолверы принимают запрос, сервисы решают, что делать, Prisma и SQL работают с базой.</p>
+    <div class="arch">
+      <div class="node"><b>Apollo Sandbox</b><span>или любой клиент</span></div><span class="arrow">→</span>
+      <div class="node"><b>Resolvers</b><span>GraphQL, DataLoader</span></div><span class="arrow">→</span>
+      <div class="node"><b>Services</b><span>логика, кэш</span></div><span class="arrow">→</span>
+      <div class="node"><b>Prisma / SQL</b><span>типизированный доступ</span></div><span class="arrow">→</span>
+      <div class="node"><b>PostgreSQL</b><span>FTS, pg_trgm, индексы</span></div>
+      <div class="node"><b>Redis</b><span>кэш, rate limit</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>© Владимир · <a href="https://ypciiiak.online">ypciiiak.online</a> · <a href="https://t.me/bigboyvova">Telegram</a> · <a href="https://github.com/YpCIIIaK">GitHub</a></span>
+    <span><a href="/health">/health</a> · <a href="/graphql">/graphql</a></span>
+  </footer>
+</div>
+
+<script>
+  const EXAMPLES = [
+    { title: 'Визитка целиком', hint: 'профиль и все связи', q: `{
+  profile {
+    name
+    headline
+    links { kind url }
+    experience {
+      company
+      role
+      periodLabel
+      achievements { text }
+    }
+    projects { name demoUrl }
+  }
+}` },
+    { title: 'Поиск по опыту', hint: 'полнотекстовый, с подсветкой', q: `{
+  search(query: "синхронизация данных") {
+    kind
+    title
+    snippet
+    rank
+  }
+}` },
+    { title: 'Подсказки навыков', hint: 'прощают опечатки', q: `{
+  suggestSkills(prefix: "opensaerch") {
+    skill { name category }
+    score
+  }
+}` },
+    { title: 'Проекты постранично', hint: 'keyset-курсор, фильтр', q: `{
+  projects(first: 3, skill: "postgresql") {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    edges { node { name summary } }
+  }
+}` },
+    { title: 'Где применял навык', hint: 'обратные связи', q: `{
+  skill(slug: "redis") {
+    name
+    projects { name }
+    experience { company }
+  }
+}` },
+    { title: 'Статистика', hint: 'агрегаты в PostgreSQL', q: `{
+  profile {
+    stats(top: 5) {
+      projects
+      skills
+      achievements
+      topSkills { skill { name } usageCount }
+      skillsByCategory { category count }
+    }
+  }
+}` },
+  ];
+
+  const tabs = document.getElementById('tabs');
+  const ta = document.getElementById('query');
+  const out = document.getElementById('out');
+
+  function select(i) {
+    [...tabs.children].forEach((t, j) => t.setAttribute('aria-selected', String(i === j)));
+    ta.value = EXAMPLES[i].q;
+    out.textContent = '// нажмите «Выполнить»';
+  }
+  EXAMPLES.forEach((ex, i) => {
+    const b = document.createElement('button');
+    b.className = 'tab';
+    b.setAttribute('role', 'tab');
+    b.innerHTML = `${ex.title}<small>${ex.hint}</small>`;
+    b.onclick = () => select(i);
+    tabs.appendChild(b);
+  });
+  select(0);
+
+  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  function highlight(json) {
+    return esc(json).replace(/("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?/g, (m, str, colon, lit) =>
+      str ? `<span class="${colon ? 'k' : 's'}">${str}</span>${colon || ''}` : lit ? `<span class="b">${m}</span>` : `<span class="n">${m}</span>`);
+  }
+
+  async function run() {
+    out.textContent = '…';
+    const started = performance.now();
+    try {
+      const res = await fetch('/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: ta.value }) });
+      const body = await res.json();
+      out.innerHTML = `<span style="color:var(--muted)">// ${res.status} · ${Math.round(performance.now() - started)} мс</span>\n` + highlight(JSON.stringify(body, null, 2));
+    } catch (e) {
+      out.textContent = '// не удалось выполнить запрос: ' + e.message;
+    }
+  }
+  document.getElementById('run').onclick = run;
+  ta.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') run(); });
+  document.getElementById('copy').onclick = async (e) => {
+    try {
+      await navigator.clipboard.writeText(ta.value);
+      e.target.textContent = 'Скопировано';
+      setTimeout(() => (e.target.textContent = 'Копировать'), 1400);
+    } catch { /* буфер обмена недоступен */ }
+  };
+
+  fetch('/health').then((r) => r.json()).then((h) => {
+    const redis = h.redis === 'up' ? 'на связи' : h.redis === 'disabled' ? 'отключён' : 'недоступен';
+    document.getElementById('health').textContent = `API работает · база ${h.db === 'up' ? 'на связи' : 'недоступна'} · Redis ${redis}`;
+  }).catch(() => (document.getElementById('health').textContent = 'API недоступен'));
+</script>
+</body>
+</html>

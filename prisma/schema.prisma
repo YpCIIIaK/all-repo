@@ -1,0 +1,185 @@
+// Схема визитки. Связи многие-ко-многим (навык ↔ проект, навык ↔ место работы)
+// вынесены в явные таблицы: по ним считается, где и сколько раз применялся навык.
+// Полнотекстовый поиск (tsvector + GIN) и триграммы (pg_trgm) добавлены SQL-миграцией:
+// Prisma не умеет описывать сгенерированные колонки, поэтому они объявлены как Unsupported.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LinkKind {
+  GITHUB
+  TELEGRAM
+  EMAIL
+  WEBSITE
+  LINKEDIN
+}
+
+enum SkillCategory {
+  LANGUAGE
+  FRONTEND
+  BACKEND
+  DATABASE
+  CMS
+  AI
+  INFRA
+  INTEGRATION
+}
+
+enum EmploymentKind {
+  FULL_TIME
+  INTERNSHIP
+  STARTUP
+  CONTRACT
+}
+
+model Profile {
+  id           Int          @id @default(autoincrement())
+  slug         String       @unique
+  name         String
+  headline     String
+  summary      String
+  location     String
+  timezone     String
+  availability String
+  languages    String
+  updatedAt    DateTime     @updatedAt
+  links        Link[]
+  skills       Skill[]
+  experiences  Experience[]
+  projects     Project[]
+  education    Education[]
+}
+
+model Link {
+  id        Int      @id @default(autoincrement())
+  profileId Int
+  kind      LinkKind
+  label     String
+  url       String
+  position  Int
+  profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, kind, url])
+  @@index([profileId, position])
+}
+
+model Skill {
+  id          Int               @id @default(autoincrement())
+  profileId   Int
+  slug        String
+  name        String
+  category    SkillCategory
+  position    Int
+  profile     Profile           @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  projects    ProjectSkill[]
+  experiences ExperienceSkill[]
+
+  @@unique([profileId, slug])
+  @@index([profileId, category, position])
+}
+
+model Experience {
+  id           Int               @id @default(autoincrement())
+  profileId    Int
+  slug         String
+  company      String
+  role         String
+  kind         EmploymentKind
+  periodLabel  String
+  /// Даты для расчёта общего стажа; null — период неизвестен точно.
+  startedOn    DateTime?         @db.Date
+  endedOn      DateTime?         @db.Date
+  position     Int
+  profile      Profile           @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  achievements Achievement[]
+  skills       ExperienceSkill[]
+
+  @@unique([profileId, slug])
+  @@index([profileId, position])
+}
+
+model Achievement {
+  id           Int                      @id @default(autoincrement())
+  experienceId Int
+  text         String
+  position     Int
+  searchVector Unsupported("tsvector")?
+  experience   Experience               @relation(fields: [experienceId], references: [id], onDelete: Cascade)
+
+  @@unique([experienceId, position])
+}
+
+model Project {
+  id           Int                      @id @default(autoincrement())
+  profileId    Int
+  slug         String
+  name         String
+  summary      String
+  repoUrl      String
+  demoUrl      String?
+  featured     Boolean                  @default(false)
+  position     Int
+  searchVector Unsupported("tsvector")?
+  profile      Profile                  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  highlights   ProjectHighlight[]
+  skills       ProjectSkill[]
+
+  @@unique([profileId, slug])
+  /// Ключ keyset-пагинации: (position, id).
+  @@index([profileId, position, id])
+}
+
+model ProjectHighlight {
+  id        Int     @id @default(autoincrement())
+  projectId Int
+  text      String
+  position  Int
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, position])
+}
+
+model ProjectSkill {
+  projectId Int
+  skillId   Int
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  skill     Skill   @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, skillId])
+  @@index([skillId])
+}
+
+model ExperienceSkill {
+  experienceId Int
+  skillId      Int
+  experience   Experience @relation(fields: [experienceId], references: [id], onDelete: Cascade)
+  skill        Skill      @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([experienceId, skillId])
+  @@index([skillId])
+}
+
+model Education {
+  id          Int     @id @default(autoincrement())
+  profileId   Int
+  institution String
+  status      String
+  position    Int
+  profile     Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, institution])
+}
+
+/// Версия загруженных данных: хэш сида. Совпал — повторная загрузка пропускается.
+model SeedState {
+  id        Int      @id @default(1)
+  hash      String
+  appliedAt DateTime @default(now())
+}
