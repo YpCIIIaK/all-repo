@@ -4,7 +4,7 @@
 #   ./run.sh plan [сценарий ...]          расчёт без запуска (очередь СМС, пики, сколько нужно VU)
 #   ./run.sh <сценарий> [длительность]    прогон: optimistic | realistic | pessimistic, длительность 3h, 30m, 10m, 90s
 #   ./run.sh all [длительность]           три сценария по очереди
-#   ./run.sh stress <сценарий>            предел сервера: поток растёт ступенями до отказа (~10 минут)
+#   ./run.sh stress <сценарий>            предел сервера: поток растёт ступенями до отказа (~9 минут)
 #
 # Любой параметр сценария можно переопределить переменной окружения:
 #   TOTAL_VOTES=2000 ./run.sh realistic 3m
@@ -87,7 +87,10 @@ split_cpus() {
     echo "Внимание: сценарий просит $want ядер под сервер, а Docker видит $n — даю $(( n - 1 )), одно остаётся k6." >&2
     want=$(( n - 1 ))
   fi
-  export SERVER_CPUSET="0-$(( want - 1 ))" CLIENT_CPUSET="$want-$(( n - 1 ))"
+  local server="0-$(( want - 1 ))" client="$want-$(( n - 1 ))"
+  [ "$want" -eq 1 ] && server=0
+  [ "$want" -eq $(( n - 1 )) ] && client=$want
+  export SERVER_CPUSET="$server" CLIENT_CPUSET="$client"
 }
 
 run_one() {
@@ -147,17 +150,19 @@ run_one() {
   )
 }
 
-# Стресс: ресурсы и сеть из сценария, а поток — ступенями от ¼ до ×4 пика этого сценария.
-# Лимит СМС-провайдера снят, сбоев нет: ищем предел именно сервера. Внешнее время ускорено ×10 —
-# СМС «доходят» быстрее, поэтому k6 нужно меньше VU.
+# Стресс: ресурсы и сеть из сценария, а поток — ступенями от ¼ до ×4 пика этого сценария, каждая
+# ступень примерно на треть выше предыдущей. Лимит СМС-провайдера снят, сбоев нет: ищем предел именно
+# сервера. Внешнее время ускорено ×10 — СМС «доходят» быстрее, поэтому k6 нужно меньше VU.
 run_stress() {
   local scenario="$1"
   ( load_scenario "$scenario"
     local peak; peak=$(awk "BEGIN { print ${PEAK_X} * ${TOTAL_VOTES} / $REAL_DURATION_SEC }")
     export MODE=stress CHAOS= SMS_RATE=100000 SMS_OUTAGE_SEC=0
-    export STRESS_STEPS="${STRESS_STEPS:-8}" STRESS_STEP_SEC="${STRESS_STEP_SEC:-60}"
-    export STRESS_FROM="${STRESS_FROM:-$(awk "BEGIN { printf \"%d\", ($peak / 4 > 5 ? $peak / 4 : 5) }")}"
-    export STRESS_TO="${STRESS_TO:-$(awk "BEGIN { printf \"%d\", $peak * 4 }")}"
+    export STRESS_STEPS="${STRESS_STEPS:-10}" STRESS_STEP_SEC="${STRESS_STEP_SEC:-45}"
+    local from="${STRESS_FROM:-$(awk "BEGIN { print ($peak / 4 > 5 ? $peak / 4 : 5) }")}"
+    local to="${STRESS_TO:-$(awk "BEGIN { print $peak * 4 }")}"
+    export STRESS_RATES; STRESS_RATES=$(awk -v a="$from" -v b="$to" -v n="$STRESS_STEPS" \
+      'BEGIN { for (i = 0; i < n; i++) printf "%s%d", (i ? "," : ""), a * (b / a) ^ (n > 1 ? i / (n - 1) : 0) + 0.5 }')
     local total=$(( STRESS_STEPS * (STRESS_STEP_SEC + 5) ))
     export REAL_DURATION_SEC=$(( total * 10 ))
     run_one "$scenario" "${total}s" )

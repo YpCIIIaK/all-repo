@@ -34,13 +34,11 @@ const plan = k6Stages(profile);
 
 // Стресс-режим (MODE=stress): вместо профиля дня — ступени нарастающего потока, чтобы найти предел сервера.
 const MODE = E('MODE', 'profile');
-const STRESS_STEPS = N('STRESS_STEPS', 8);
-const STRESS_STEP_SEC = N('STRESS_STEP_SEC', 60);
+// Скорости ступеней (голосов/с) считает run.sh: от ¼ до ×4 пика сценария, каждая ~на треть выше.
+const stressRates = E('STRESS_RATES', '25,50,100,200').split(',').map(Number);
+const STRESS_STEPS = stressRates.length;
+const STRESS_STEP_SEC = N('STRESS_STEP_SEC', 45);
 const STRESS_RAMP_SEC = 5;
-const stressRates = Array.from(
-  { length: STRESS_STEPS },
-  (_, i) => N('STRESS_FROM', 25) + ((N('STRESS_TO', 400) - N('STRESS_FROM', 25)) * i) / Math.max(1, STRESS_STEPS - 1),
-);
 
 const PATIENCE_SEC = scaled(N('SMS_PATIENCE_SEC', 180), 2);
 const RETRY_WINDOW_SEC = scaled(N('RETRY_WINDOW_SEC', 60), 5);
@@ -80,7 +78,7 @@ for (const op of ['requestCode', 'verifyCode', 'castVote', 'results']) {
 // Пороги-заглушки нужны, чтобы k6 вывел в сводку счётчики по каждому варианту — по ним идёт сверка с базой.
 for (let c = 1; c <= CANDIDATES; c++) thresholds[`votes_confirmed{candidate:${c}}`] = ['count>=0'];
 for (const step of ['requestCode', 'smsTimeout', 'verifyCode:400', 'verifyCode:429', 'verifyCode:503', 'verifyCode:500', 'castVote']) {
-  thresholds[`voter_failures{step:${step}}`] = ['count>=0'];
+  thresholds[`voter_failures{reason:${step}}`] = ['count>=0'];
 }
 
 // В стресс-режиме пороги по ступеням только выводят цифры в сводку, решение принимает verify.
@@ -220,8 +218,8 @@ function waitSms(phone, since) {
 const pad = (n, len) => String(n).padStart(len, '0');
 
 /** Неудача избирателя с причиной: на каком шаге он отвалился. */
-function fail(step) {
-  voterFailures.add(1, { step });
+function fail(reason) {
+  voterFailures.add(1, { reason });
   userSuccess.add(false);
 }
 const randomCandidate = () => 1 + Math.floor(Math.random() * CANDIDATES);

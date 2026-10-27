@@ -82,19 +82,24 @@ export class VotingService {
     // Несколько последних кодов: после «отправить ещё раз» может первым прийти старый.
     // Срок — от отправки, а если воркер ещё не успел её отметить (СМС дошла быстрее, чем записалась
     // отметка), — от создания кода. Требовать sentAt нельзя: под нагрузкой это отклоняет верные коды.
+    //
+    // Повтор с уже использованным кодом в пределах его срока снова выдаёт токен: если ответ потерялся
+    // (обрыв связи, таймаут под нагрузкой), человек жмёт «подтвердить» ещё раз и не должен получить
+    // «неверный код». Безопасность не страдает: этот код и так давал вход до конца своего срока.
     const cutoff = Date.now() - config.otpTtlSec * 1000;
     const codes = await this.prisma.otpCode.findMany({
-      where: { voterId: voter.id, usedAt: null, createdAt: { gte: new Date(cutoff - config.otpTtlSec * 1000) } },
+      where: { voterId: voter.id, createdAt: { gte: new Date(cutoff - config.otpTtlSec * 1000) } },
       orderBy: { id: 'desc' },
       take: 3,
-      select: { id: true, codeHash: true, sentAt: true, createdAt: true },
+      select: { id: true, codeHash: true, sentAt: true, createdAt: true, usedAt: true },
     });
     const hash = hashCode(voter.id, code);
     const match = codes.find((c) => (c.sentAt ?? c.createdAt).getTime() >= cutoff && sameHash(c.codeHash, hash));
     if (!match) throw wrong;
 
-    const used = await this.prisma.otpCode.updateMany({ where: { id: match.id, usedAt: null }, data: { usedAt: new Date() } });
-    if (used.count === 0) throw wrong;
+    if (!match.usedAt) {
+      await this.prisma.otpCode.updateMany({ where: { id: match.id, usedAt: null }, data: { usedAt: new Date() } });
+    }
     await this.prisma.voter.updateMany({ where: { id: voter.id, verifiedAt: null }, data: { verifiedAt: new Date() } });
     await this.redis.del(failKey).catch(() => undefined);
     return { token: signToken(voter.id) };

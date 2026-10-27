@@ -143,34 +143,42 @@ async function main() {
   const stress = env('MODE') === 'stress';
   const stressLines: string[] = [];
   if (stress) {
-    const steps = Number(env('STRESS_STEPS', '8'));
-    const from = Number(env('STRESS_FROM', '25'));
-    const to = Number(env('STRESS_TO', '400'));
+    const rates = env('STRESS_RATES').split(',').map(Number);
     const successMin = Number(env('SUCCESS_MIN', '0.99'));
     const p95Max = Number(env('API_P95_MS', '800'));
     const peakNeeded = (Number(env('PEAK_X', '10')) * Number(env('TOTAL_VOTES', '100000'))) / 10_800;
     let capacity = 0;
-    let broken = false;
+    let breaksAt: number | null = null;
     stressLines.push('| Ступень, голосов/с | Запросов к API/с | Начали | Успешно | p95 requestCode | p95 verifyCode | p95 castVote | Ошибки 5xx | Держит |');
     stressLines.push('|---|---|---|---|---|---|---|---|---|');
-    for (let i = 0; i < steps; i++) {
-      const rate = from + ((to - from) * i) / Math.max(1, steps - 1);
+    rates.forEach((rate, i) => {
       const success = metric(summary, `user_success{step:${i}}`, 'value');
       const p95 = ['requestCode', 'verifyCode', 'castVote'].map((op) => metric(summary, `http_req_duration{op:${op},step:${i}}`, 'p(95)'));
       const holds = success >= successMin && p95.every((v) => v < p95Max);
-      if (holds && !broken) capacity = rate;
-      else broken = true;
+      if (holds && breaksAt === null) capacity = rate;
+      else if (!holds && breaksAt === null) breaksAt = rate;
       stressLines.push(
-        `| ${rate.toFixed(0)} | ${(rate * 3).toFixed(0)} | ${fmtInt(metric(summary, `voters_started{step:${i}}`, 'count'))} | ` +
+        `| ${rate} | ${rate * 3} | ${fmtInt(metric(summary, `voters_started{step:${i}}`, 'count'))} | ` +
           `${(success * 100).toFixed(1)} % | ${p95.map(fmtMs).join(' | ')} | ${(metric(summary, `api_errors{step:${i}}`, 'value') * 100).toFixed(1)} % | ${holds ? '✅' : '❌'} |`,
       );
-    }
+    });
+    const limit =
+      breaksAt === null
+        ? `держит все ступени, до ${capacity} голосов/с (≈ ${capacity * 3} запросов/с) и, возможно, больше`
+        : capacity === 0
+          ? `не держит даже ${breaksAt} голосов/с`
+          : `держит ${capacity} голосов/с (≈ ${capacity * 3} запросов/с), на ${breaksAt} уже нет`;
+    const verdict =
+      capacity >= peakNeeded
+        ? `запас не меньше ×${(capacity / peakNeeded).toFixed(1)}`
+        : breaksAt !== null && breaksAt <= peakNeeded
+          ? `не хватает: предел меньше ${breaksAt}`
+          : `запас под вопросом — пик между ступенями ${capacity} и ${breaksAt}, уточните STRESS_RATES`;
     stressLines.unshift(
-      `**Сервер держит до ${capacity.toFixed(0)} голосов/с (≈ ${(capacity * 3).toFixed(0)} запросов/с).** ` +
-        `На пике голосования нужно ${peakNeeded.toFixed(0)} голосов/с — ` +
-        (capacity >= peakNeeded ? `запас ×${(capacity / peakNeeded).toFixed(1)}.` : `не хватает в ${(peakNeeded / Math.max(capacity, 1)).toFixed(1)} раза.`),
+      `**Сервер ${limit}.** На пике голосования нужно ${peakNeeded.toFixed(0)} голосов/с — ${verdict}.`,
       '',
-      `«Держит» — доля успешных не ниже ${(successMin * 100).toFixed(0)} % и p95 каждого запроса меньше ${fmtMs(p95Max)}.`,
+      `«Держит» — доля успешных не ниже ${(successMin * 100).toFixed(0)} % и p95 каждого запроса меньше ${fmtMs(p95Max)}. ` +
+        'Задержки включают имитацию сети сценария.',
       '',
     );
     // В стрессе отказы на верхних ступенях — цель теста, а не ошибка: оцениваем только корректность.
@@ -204,7 +212,7 @@ async function main() {
     '',
     `Где отвалились: ${
       ['requestCode', 'smsTimeout', 'verifyCode:400', 'verifyCode:429', 'verifyCode:503', 'verifyCode:500', 'castVote']
-        .map((step) => [step, metric(summary, `voter_failures{step:${step}}`, 'count')] as const)
+        .map((step) => [step, metric(summary, `voter_failures{reason:${step}}`, 'count')] as const)
         .filter(([, n]) => n > 0)
         .map(([step, n]) => `${step} — ${fmtInt(n)}`)
         .join(', ') || 'нигде'
