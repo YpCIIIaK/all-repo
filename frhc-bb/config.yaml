@@ -1,0 +1,36 @@
+nickname: "ypciiiak"          # ваш ник на Tumar.One -> X-Bug-Bounty
+rps: 5                         # программа: не более 10, берём с запасом
+timeout: 15
+user_agent: "Mozilla/5.0 (bb-research)"
+
+# Очередь сервисов: проходим по порядку. tier влияет на приоритет/выплаты.
+scope:
+  - {pattern: "ftel.kz",            tier: core}
+  - {pattern: "*.bankffin.kz",      tier: auth}
+  - {pattern: "*.fcd.kz",           tier: key}
+  - {pattern: "*.freedompay.kz",    tier: key}
+  - {pattern: "*.fbroker.kz",       tier: key}
+  - {pattern: "*.ticketon.kz",      tier: core}
+  - {pattern: "*.freedom-travel.kz", tier: new}
+  - {pattern: "*.arbuz.kz",         tier: core}
+  - {pattern: "*.ffin.life",        tier: core}
+  - {pattern: "*.ffins.kz",         tier: core}
+  - {pattern: "*.ffin.credit",      tier: new}
+
+# demo/test-хосты НЕ отбрасываем и не понижаем: помечаем тегом "nonprod".
+# Уязвимость самого demo = informational, но утечка из него прод-данных/секретов
+# (ключи, токены, прод-БД, реальные ПДн) бьёт по проду -> это полноценная находка.
+low_value_keywords: [demo, test, dev, stage, staging, sandbox, training, uat]
+
+# Только ВАШИ тестовые аккаунты. Заполняйте заголовки сессии вручную.
+accounts:
+  A:
+    headers: {Cookie: "", Authorization: ""}
+    markers: []      # уникальные строки ТОЛЬКО этого аккаунта: email, телефон, имя, id
+  B:
+    headers: {Cookie: "", Authorization: ""}
+    markers: []
+
+# Двойники: прод-хост -> nonprod-хост, для проверки «прод-токен работает на demo»
+twins: {}
+#  api.bankffin.kz: api-test.bankffin.kz
