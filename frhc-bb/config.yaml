@@ -1,7 +1,7 @@
 nickname: "ypciiiak"          # ваш ник на Tumar.One -> X-Bug-Bounty
 rps: 5                         # программа: не более 10, берём с запасом
 timeout: 15
-user_agent: "Mozilla/5.0 (bb-research)"
+user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
 
 # Очередь сервисов: проходим по порядку. tier влияет на приоритет/выплаты.
 scope:
