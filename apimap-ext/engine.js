@@ -127,7 +127,7 @@
           .replace(/^https?:\/\/[^/]+/, "").split("?")[0].replace(/\/:([A-Za-z_]\w*)/g, "/{$1}").replace(/\/\/+/g, "/");
         if (!p || p.length < 3 || /\s/.test(p) || STATIC_EXT.test(p) || !p.includes("/") || !API_HINT.test(p)) continue;
         const method = kind === "call" ? m[1].toUpperCase() : null;
-        out.push({ path: p.replace(/^\/+/, ""), method, src, ctx: text.slice(Math.max(0, m.index - 100), m.index + 160).replace(/\s+/g, " ") });
+        out.push({ path: p.replace(/^\/+/, ""), absolute: /^\//.test(p) || /^https?:/.test(raw), method, src, ctx: text.slice(Math.max(0, m.index - 100), m.index + 160).replace(/\s+/g, " ") });
       }
     }
     return out;
@@ -149,6 +149,7 @@
     reset() {
       this.records = []; this.eps = new Map(); this.produced = new Map(); this.flows = new Map();
       this.findings = []; this.staticSeen = new Set(); this.tech = new Map(); this.jwts = new Map(); this.version = 0;
+      this.prefixes = new Map();   // host -> Map(prefix -> votes): learned API base, e.g. "api/v1"
     }
     key(host, path) { return host + "/" + path; }
     static suffixMatch(stat, real) {
@@ -172,6 +173,32 @@
       for (const [k, s] of this.eps) {
         if (s === ep || s.observed || s.host !== ep.host || !Engine.suffixMatch(s.path, ep.path)) continue;
         s.methods.forEach(m => ep.methods.add(m)); ep.static.push(...s.static.slice(0, 3 - ep.static.length));
+        this.eps.delete(k);
+        this.votePrefix(ep.host, ep.path, s.path);
+      }
+      this.applyPrefix(ep.host);
+    }
+    votePrefix(host, real, stat) {
+      const r = real.split("/"), n = stat.split("/").filter(Boolean).length;
+      if (r.length <= n) return;
+      const pre = r.slice(0, r.length - n).join("/");
+      if (!pre || pre.split("/").length > 3) return;
+      const m = this.prefixes.get(host) || new Map(); m.set(pre, (m.get(pre) || 0) + 1); this.prefixes.set(host, m);
+    }
+    bestPrefix(host) {
+      const m = this.prefixes.get(host); if (!m) return null;
+      let best = null, v = 0; for (const [p, n] of m) if (n > v) { best = p; v = n; }
+      return v >= 2 ? best : null;
+    }
+    /* move static-only endpoints (relative paths) under the learned API base */
+    applyPrefix(host) {
+      const pre = this.bestPrefix(host); if (!pre) return;
+      for (const [k, s] of [...this.eps]) {
+        if (s.observed || s.host !== host || s.path.startsWith(pre + "/") || s.absolute) continue;
+        const np = pre + "/" + s.path, nk = this.key(host, np);
+        const t = this.eps.get(nk);
+        if (t) { s.methods.forEach(m => t.methods.add(m)); if (t.static.length < 3) t.static.push(...s.static.slice(0, 3 - t.static.length)); }
+        else { s.path = np; s.key = nk; this.eps.set(nk, s); }
         this.eps.delete(k);
       }
     }
@@ -205,7 +232,9 @@
           const name = u.pathname.split("/").pop() || u.host;
           for (const s of jsEndpoints(rec.resBody, name)) {
             const sp = normPath("/" + s.path);
-            const ep = this.matchObserved(u.host, sp) || this.ensureEp(u.host, sp, false);
+            const pre = !s.absolute && this.bestPrefix(u.host);
+            const ep = this.matchObserved(u.host, sp) || this.ensureEp(u.host, pre && !sp.startsWith(pre + "/") ? pre + "/" + sp : sp, false);
+            if (s.absolute) ep.absolute = true;
             if (s.method) ep.methods.add(s.method);
             if (ep.static.length < 3) ep.static.push({ src: s.src, ctx: s.ctx });
           }
