@@ -198,6 +198,9 @@ def merge_observed(eps, observed):
 
 
 def main():
+    for st in (sys.stdout, sys.stderr):            # консоль Windows (cp1251/cp866)
+        try: st.reconfigure(encoding="utf-8", errors="replace")
+        except Exception: pass
     args = sys.argv[1:]
     out = pathlib.Path(args[0]); out.mkdir(parents=True, exist_ok=True)
     calls = []
@@ -228,7 +231,7 @@ def main():
                 for name, body in jsb:
                     calls += extract(body, name)
             else:
-                calls += extract(fp.read_text(errors="ignore"), fp.name)
+                calls += extract(fp.read_text(encoding="utf-8", errors="ignore"), fp.name)
     if har_calls:                                   # реальные пути -> канонические статические
         static_eps, _ = build(calls) if calls else ([], [])
         for hc in har_calls:
@@ -240,9 +243,9 @@ def main():
     eps = merge_observed(eps, observed)
     flows = [dict(f, **{"from": canon(f["from"], eps), "to": canon(f["to"], eps)}) for f in flows]
     data = {"endpoints": eps, "links": links, "flows": flows, "sources": sources, "tree": tree(eps)}
-    (out / "apimap.json").write_text(json.dumps(data, ensure_ascii=False, indent=1))
-    tpl = (pathlib.Path(__file__).parent / "apimap_template.html").read_text()
-    (out / "apimap.html").write_text(tpl.replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False)))
+    (out / "apimap.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    tpl = (pathlib.Path(__file__).parent / "apimap_template.html").read_text(encoding="utf-8")
+    (out / "apimap.html").write_text(tpl.replace("/*__DATA__*/null", json.dumps(data, ensure_ascii=False)), encoding="utf-8")
     print(f"вызовов {len(calls)}, эндпоинтов {len(eps)}, связей {len(links)} -> {out}/apimap.html")
     for e in eps[:15]:
         print(f"{e['score']:>3}  {','.join(e['methods']):<12} {e['path']:<55} {'; '.join(e['why'][:4])}")

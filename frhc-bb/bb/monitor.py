@@ -130,7 +130,7 @@ def diff(old, new):
 
 def main(only=None):
     cfg = load(); c = SafeClient(cfg, log_path="logs/monitor_requests.jsonl")
-    old = json.loads(SNAP.read_text()) if SNAP.exists() else {}
+    old = json.loads(SNAP.read_text(encoding="utf-8")) if SNAP.exists() else {}
     new = {}
     for item in cfg["scope"]:
         pat = item["pattern"]; dom = pat[2:] if pat.startswith("*.") else pat
@@ -160,7 +160,7 @@ def main(only=None):
                 print(f"  [{i}/{len(names)}] {h} {hi['status']} {'CF-BLOCK ' if hi.get('cf_block') else ''}"
                       f"js={len(hi.get('js', {}))} eps={len(hi.get('endpoints', []))}")
         new[dom] = {"scanned": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"), "hosts": hosts}
-    SNAP.write_text(json.dumps(new, ensure_ascii=False, indent=1, sort_keys=True))
+    SNAP.write_text(json.dumps(new, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
     today = datetime.date.today().isoformat()
     if not old:
         body = ["Базовый снимок создан, сравнивать пока не с чем.", ""]
@@ -171,7 +171,7 @@ def main(only=None):
     else:
         body = diff(old, new) or ["Изменений нет."]
     rep = DATA / f"report-{today}.md"
-    rep.write_text(f"# Monitor {today}\n\n" + "\n".join(body) + "\n")
+    rep.write_text(f"# Monitor {today}\n\n" + "\n".join(body) + "\n", encoding="utf-8")
     print("\n".join(body)); print(f"\n-> {rep}")
 
 
