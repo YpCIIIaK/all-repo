@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+:root{--bg:#0f1115;--panel:#161a21;--panel2:#1c212b;--line:#2a3040;--text:#d8dee9;--mute:#8b93a7;
+--accent:#7aa2f7;--ok:#3fb27f;--warn:#e0af68;--hot:#f7768e;--crit:#ff4d6d;--mono:'JetBrains Mono',ui-monospace,monospace}
+:root[data-theme="light"]{--bg:#f6f7fb;--panel:#fff;--panel2:#eef1f7;--line:#d9dee8;--text:#1d2433;--mute:#5d667a;--accent:#3b6fe0}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px Inter,system-ui,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.3px}
+.stat{font:12px var(--mono);color:var(--mute);padding:3px 8px;border:1px solid var(--line);border-radius:6px}
+input,select,button{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font:13px Inter}
+button{cursor:pointer}button.on{border-color:var(--accent);color:var(--accent)}
+main{display:grid;grid-template-columns:1fr 420px;height:calc(100% - 52px)}
+#graph{position:relative;overflow:hidden}#graph svg{width:100%;height:100%;cursor:grab}
+aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;display:flex;flex-direction:column}
+.tabs{display:flex;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:2}
+.tabs button{flex:1;border:0;border-radius:0;background:none;padding:10px;border-bottom:2px solid transparent;color:var(--mute)}
+.tabs button.on{color:var(--text);border-bottom-color:var(--accent)}
+.pane{padding:14px;display:none}.pane.on{display:block}
+.node rect{rx:5;stroke-width:1.2}
+.node text{font:12px var(--mono);fill:var(--text);pointer-events:none}
+.link{fill:none;stroke:var(--line);stroke-width:1.6}
+.flow{fill:none;stroke:var(--warn);stroke-width:1.4;stroke-dasharray:4 4;opacity:.75}
+.badge{display:inline-block;font:11px var(--mono);padding:2px 6px;border-radius:4px;margin:2px 4px 2px 0;border:1px solid var(--line)}
+.m-GET{color:var(--ok)}.m-POST{color:var(--accent)}.m-PUT,.m-PATCH{color:var(--warn)}.m-DELETE{color:var(--hot)}
+h2{font-size:13px;margin:16px 0 6px;color:var(--mute);text-transform:uppercase;letter-spacing:.6px}
+.path{font:600 14px var(--mono);word-break:break-all}
+pre{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px;font:11.5px/1.45 var(--mono);white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto}
+.why li{margin:3px 0}
+.row{display:grid;grid-template-columns:38px 1fr;gap:8px;padding:7px 6px;border-bottom:1px solid var(--line);cursor:pointer;align-items:start}
+.row:hover{background:var(--panel2)}
+.sc{font:700 12px var(--mono);text-align:center;border-radius:5px;padding:3px 0}
+.legend{position:absolute;left:12px;bottom:12px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--mute)}
+.legend span{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 10px;vertical-align:-1px}
+.empty{color:var(--mute);padding:20px}
+@media (max-width:900px){main{grid-template-columns:1fr;grid-template-rows:55vh auto}aside{border-left:0;border-top:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>⟡ API Map</h1>
+  <span class="stat" id="s-ep"></span><span class="stat" id="s-hot"></span><span class="stat" id="s-links"></span><span class="stat" id="s-src"></span>
+  <input id="q" placeholder="фильтр: путь, поле, причина…" style="flex:1;min-width:180px">
+  <select id="minsc"><option value="0">все</option><option value="3">риск ≥ 3</option><option value="5" selected>риск ≥ 5</option><option value="8">риск ≥ 8</option></select>
+  <button id="bflow" class="on">потоки ID</button>
+  <button id="bexp">развернуть</button>
+  <button id="btheme">◐</button>
+</header>
+<main>
+  <div id="graph"><svg></svg>
+    <div class="legend">риск<span style="background:var(--ok)"></span>0–2<span style="background:var(--warn)"></span>3–5<span style="background:var(--hot)"></span>6–8<span style="background:var(--crit)"></span>9+</div>
+  </div>
+  <aside>
+    <div class="tabs"><button data-t="rank" class="on">Слабые места</button><button data-t="det">Детали</button><button data-t="flow">Потоки</button></div>
+    <div class="pane on" id="p-rank"></div>
+    <div class="pane" id="p-det"><div class="empty">Выберите узел в дереве или строку в рейтинге.</div></div>
+    <div class="pane" id="p-flow"></div>
+  </aside>
+</main>
+<script>
+const DATA = /*__DATA__*/null;
+const root = document.documentElement;
+try{const t=localStorage.getItem('apimap-theme');if(t)root.dataset.theme=t}catch(e){}
+document.getElementById('btheme').onclick=()=>{root.dataset.theme=root.dataset.theme==='light'?'dark':'light';try{localStorage.setItem('apimap-theme',root.dataset.theme)}catch(e){}};
+
+const EP = Object.fromEntries(DATA.endpoints.map(e=>[e.path,e]));
+const col = s => s>=9?'var(--crit)':s>=6?'var(--hot)':s>=3?'var(--warn)':'var(--ok)';
+const esc = s => String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hot = DATA.endpoints.filter(e=>e.score>=6).length;
+s('s-ep',`${DATA.endpoints.length} эндпоинтов`);s('s-hot',`${hot} с высоким риском`);
+s('s-links',`${(DATA.flows||[]).length} потоков · ${DATA.links.length} общих параметров`);
+s('s-src',DATA.sources?`источники: ${DATA.sources.join(', ')}`:'');
+function s(id,t){document.getElementById(id).textContent=t}
+
+// максимальный риск в поддереве
+const h = d3.hierarchy(DATA.tree);
+h.eachAfter(n=>{const e=n.data.ep&&EP[n.data.ep];n.max=Math.max(e?e.score:0,...(n.children||[]).map(c=>c.max))});
+
+// ---------- дерево ----------
+const svg=d3.select('svg'), g=svg.append('g');
+const zoom=d3.zoom().scaleExtent([.15,3]).on('zoom',ev=>g.attr('transform',ev.transform));svg.call(zoom);
+const gl=g.append('g'), gf=g.append('g'), gn=g.append('g');
+const DX=26, DY=230;
+let minsc=+document.getElementById('minsc').value, filt='';
+h.descendants().forEach(d=>{d._children=d.children;if(d.depth>=1&&d.max<minsc)d.children=null});
+
+function visible(n){if(!filt)return true;const e=n.data.ep&&EP[n.data.ep];
+  const txt=(n.data.name+' '+(e?[e.path,e.fields.join(' '),e.why.join(' ')].join(' '):'')).toLowerCase();
+  return txt.includes(filt)||(n._children||[]).some(visible)}
+
+function update(src){
+  const layout=d3.tree().nodeSize([DX,DY]);
+  const r=h.copy?h:h; layout(h);
+  const nodes=h.descendants().filter(visible), links=h.links().filter(l=>visible(l.target));
+  const pos=new Map(nodes.map(n=>[n.data.ep||'',n]));
+  const lk=gl.selectAll('path').data(links,d=>d.target.id||(d.target.id=Math.random()));
+  lk.join('path').attr('class','link').attr('d',d3.linkHorizontal().x(d=>d.y).y(d=>d.x));
+  const nd=gn.selectAll('g.node').data(nodes,d=>d.id||(d.id=Math.random()));
+  const en=nd.enter().append('g').attr('class','node').style('cursor','pointer')
+    .on('click',(ev,d)=>{if(d._children){d.children=d.children?null:d._children;update(d)} if(d.data.ep)show(d.data.ep)});
+  en.append('rect');en.append('text').attr('x',8).attr('dy','0.32em');
+  const all=en.merge(nd).attr('transform',d=>`translate(${d.y},${d.x})`);
+  all.select('text').text(d=>{const e=d.data.ep&&EP[d.data.ep];return d.data.name+(e?'  '+e.methods.join('·'):'')+(d._children&&!d.children?'  ▸'+d._children.length:'')});
+  all.each(function(d){const t=this.querySelector('text');const w=t.getComputedTextLength()+16;
+    d3.select(this).select('rect').attr('x',0).attr('y',-10).attr('width',w).attr('height',20)
+      .attr('fill','var(--panel)').attr('stroke',col(d.max))});
+  nd.exit().remove();
+  // потоки ID: ответ эндпоинта → параметр другого
+  const fl=document.getElementById('bflow').classList.contains('on')?(DATA.flows||[]):[];
+  const fdata=fl.map(f=>({f,a:pos.get(f.from),b:pos.get(f.to)})).filter(x=>x.a&&x.b);
+  gf.selectAll('path').data(fdata).join('path').attr('class','flow')
+    .attr('d',x=>{const a=[x.a.y,x.a.x],b=[x.b.y,x.b.x],mx=(a[0]+b[0])/2+60;return `M${a[0]},${a[1]} C${mx},${a[1]} ${mx},${b[1]} ${b[0]},${b[1]}`})
+    .append('title').text(x=>`${x.f.field}: ${x.f.from} → ${x.f.to}`);
+}
+update(h);
+svg.call(zoom.transform,d3.zoomIdentity.translate(40,innerHeight/2).scale(.85));
+
+document.getElementById('minsc').onchange=e=>{minsc=+e.target.value;h.descendants().forEach(d=>{d.children=(d.depth>=1&&d.max<minsc)?null:d._children});update(h);rank()};
+document.getElementById('q').oninput=e=>{filt=e.target.value.toLowerCase().trim();update(h);rank()};
+document.getElementById('bflow').onclick=e=>{e.target.classList.toggle('on');update(h)};
+document.getElementById('bexp').onclick=()=>{h.descendants().forEach(d=>d.children=d._children);update(h)};
+
+// ---------- панели ----------
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>tab(b.dataset.t));
+function tab(t){document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id==='p-'+t))}
+
+function rank(){
+  const rows=DATA.endpoints.filter(e=>e.score>=minsc&&(!filt||(e.path+e.fields.join(' ')+e.why.join(' ')).toLowerCase().includes(filt)));
+  document.getElementById('p-rank').innerHTML=rows.length?rows.map(e=>`<div class="row" data-p="${esc(e.path)}">
+    <div class="sc" style="background:${col(e.score)};color:#111">${e.score}</div>
+    <div><div class="path" style="font-size:12.5px">${e.methods.map(m=>`<span class="m-${m}">${m}</span>`).join(' ')} ${esc(e.path)}</div>
+    <div style="color:var(--mute);font-size:12px;margin-top:3px">${esc(e.why.slice(0,4).join(' · '))}</div></div></div>`).join(''):'<div class="empty">Нет совпадений.</div>';
+  document.querySelectorAll('#p-rank .row').forEach(r=>r.onclick=()=>show(r.dataset.p));
+}
+rank();
+
+function show(p){const e=EP[p];if(!e)return;tab('det');
+  const rel=DATA.links.filter(l=>l.endpoints.includes(p));
+  const fin=(DATA.flows||[]).filter(f=>f.to===p), fout=(DATA.flows||[]).filter(f=>f.from===p);
+  document.getElementById('p-det').innerHTML=`
+  <div class="path">${esc(e.path)}</div>
+  <div style="margin-top:6px">${e.methods.map(m=>`<span class="badge m-${m}">${m}</span>`).join('')}
+   <span class="badge" style="border-color:${col(e.score)}">риск ${e.score}</span>
+   <span class="badge">токен во фронте: ${e.auth_hint}</span>${e.observed?`<span class="badge">видели в трафике ×${e.observed.count}</span>`:''}</div>
+  <h2>Почему</h2><ul class="why">${e.why.map(w=>`<li>${esc(w)}</li>`).join('')||'<li>—</li>'}</ul>
+  ${e.params.length?`<h2>Параметры пути</h2>${e.params.map(x=>`<span class="badge">{${esc(x)}}</span>`).join('')}`:''}
+  ${e.fields.length?`<h2>Поля тела / запроса</h2>${e.fields.map(x=>`<span class="badge">${esc(x)}</span>`).join('')}`:''}
+  ${e.observed?`<h2>Из реального трафика</h2><pre>${esc(JSON.stringify(e.observed,null,1))}</pre>`:''}
+  ${fin.length?`<h2>ID приходят из</h2>${fin.map(f=>`<div class="badge" style="cursor:pointer" data-go="${esc(f.from)}">${esc(f.field)} ← ${esc(f.from)}</div>`).join('')}`:''}
+  ${fout.length?`<h2>Отдаёт ID в</h2>${fout.map(f=>`<div class="badge" style="cursor:pointer" data-go="${esc(f.to)}">${esc(f.field)} → ${esc(f.to)}</div>`).join('')}`:''}
+  ${rel.length?`<h2>Общие параметры</h2>${rel.map(l=>`<div style="margin:4px 0"><span class="badge">${esc(l.param)}</span> ${l.endpoints.filter(x=>x!==p).map(x=>`<span class="badge" style="cursor:pointer" data-go="${esc(x)}">${esc(x)}</span>`).join('')}</div>`).join('')}`:''}
+  <h2>Где в коде</h2>${e.sites.map(x=>`<div style="color:var(--mute);font:11px var(--mono)">${esc(x.src)} @${x.offset}</div><pre>${esc(x.ctx)}</pre>`).join('')}`;
+  document.querySelectorAll('#p-det [data-go]').forEach(b=>b.onclick=()=>show(b.dataset.go));
+}
+
+function flows(){const f=DATA.flows||[];
+  document.getElementById('p-flow').innerHTML=(f.length?`<h2>Поток ID (из HAR)</h2>`+f.map(x=>`<div class="row" style="grid-template-columns:1fr"><div><span class="badge">${esc(x.field)}</span> <span class="path" style="font-size:12px">${esc(x.from)}</span> → <span class="path" style="font-size:12px">${esc(x.to)}</span></div></div>`).join(''):'<div class="empty">Потоки ID строятся из записанного трафика (HAR). Сохраните в DevTools → Network → Save all as HAR и передайте файл анализатору.</div>')
+  +`<h2>Общие параметры (статика)</h2>`+DATA.links.map(l=>`<div style="margin:6px 0"><span class="badge" style="border-color:var(--warn)">${esc(l.param)}</span> ${l.endpoints.map(x=>`<span class="badge">${esc(x)}</span>`).join('')}</div>`).join('');}
+flows();
+</script>
+</body>
+</html>
