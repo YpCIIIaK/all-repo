@@ -119,7 +119,7 @@
   let sim = null;
   const zoom = d3.zoom().scaleExtent([0.08, 3]).on("zoom", ev => g.attr("transform", ev.transform));
   svg.call(zoom).on("dblclick.zoom", null);
-  svg.on("click", ev => { if (ev.target === svg.node()) { selEp = null; highlight(); } });
+  svg.on("click", ev => { if (ev.target === svg.node()) { selEp = null; selPage = null; if (view === "tree") highlight(); else schedule(true); } });
   let lastRoot = null, firstFit = true, renderT = null, pending = false;
   const DX = 26, DY = 210;
 
@@ -217,63 +217,101 @@
   // ---------- view: flow graph ----------
   function short(k) { return k.split("/").slice(1).join("/"); }
   function renderFlowGraph(ff) {
-    const fl = eng.flowList().filter(f => { const a = eng.endpoint(f.from), b = eng.endpoint(f.to); return a && b && ff(a) && ff(b); });
+    if (sim) { sim.stop(); sim = null; }
+    gv.selectAll("*").remove();
+    const fl = eng.flowList().filter(f => { const a = eng.endpoint(f.from), b = eng.endpoint(f.to); return a && b && f.from !== f.to && ff(a) && ff(b); });
     if (!fl.length) {
-      if (sim) { sim.stop(); sim = null; }
-      gv.selectAll("*").remove();
-      gv.append("text").attr("x", 0).attr("y", 0).attr("fill", "var(--mute)").style("font", "14px var(--sans)")
+      gv.append("text").attr("fill", "var(--mute)").style("font", "14px var(--sans)")
         .text("Потоков ID пока нет: пройдите цепочку «список → объект → действие» (с Disable cache).");
       if (firstFit) { firstFit = false; fit(); }
       return;
     }
+    // --- graph ---
     const ids = [...new Set(fl.flatMap(f => [f.from, f.to]))];
-    const old = new Map((sim ? sim.nodes() : []).map(n => [n.id, n]));
-    const nodes = ids.map(id => old.get(id) || { id });
-    const links = fl.map(f => ({ source: f.from, target: f.to, f }));
-    gv.selectAll(":scope > text").remove();
-    const le = gv.selectAll("g.ge").data(links, d => d.f.from + ">" + d.f.to + d.f.field);
-    const lee = le.enter().append("g").attr("class", "ge");
-    lee.append("path").attr("class", "gedge").attr("marker-end", "url(#arr)");
-    lee.append("text").attr("class", "gedge-l").attr("text-anchor", "middle");
-    le.exit().remove();
-    const ne = gv.selectAll("g.gnode").data(nodes, d => d.id);
-    const nee = ne.enter().append("g").attr("class", "gnode")
-      .call(d3.drag().on("start", (ev, d) => { if (!ev.active) sim.alphaTarget(0.2).restart(); d.fx = d.x; d.fy = d.y; })
-        .on("drag", (ev, d) => { d.fx = ev.x; d.fy = ev.y; }).on("end", (ev, d) => { if (!ev.active) sim.alphaTarget(0); }))
-      .on("click", (ev, d) => { ev.stopPropagation(); selEp = d.id; showEp(d.id); markFlow(); });
-    nee.append("rect").attr("class", "hit").attr("x", -12).attr("y", -12).attr("height", 24).attr("fill", "transparent");
-    nee.append("circle").attr("r", 9);
-    nee.append("text").attr("x", 13).attr("dy", "0.32em");
-    ne.exit().remove();
-    const allN = nee.merge(ne), allL = lee.merge(le);
-    allN.select("circle").attr("stroke", d => col((eng.endpoint(d.id) || {}).score || 0));
-    allN.select("text").text(d => { const e = eng.endpoint(d.id); return [...(e ? e.methods : [])].join("·") + " " + short(d.id); });
-    allL.select("text").text(d => d.f.field + (d.f.count > 1 ? " ×" + d.f.count : ""));
-    allN.each(function () { d3.select(this).select("rect.hit").attr("width", this.querySelector("text").getComputedTextLength() + 30); });
-    if (sim) sim.stop();
-    sim = d3.forceSimulation(nodes)
-      .force("link", d3.forceLink(links).id(d => d.id).distance(230).strength(0.6))
-      .force("charge", d3.forceManyBody().strength(-900))
-      .force("x", d3.forceX().strength(0.04)).force("y", d3.forceY().strength(0.06))
-      .force("collide", d3.forceCollide(70))
-      .on("tick", () => {
-        allL.select("path").attr("d", d => {
-          const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y, L = Math.hypot(dx, dy) || 1;
-          const tx = d.target.x - dx / L * 11, ty = d.target.y - dy / L * 11;
-          return `M${d.source.x},${d.source.y} Q${(d.source.x + tx) / 2 - dy * 0.15},${(d.source.y + ty) / 2 + dx * 0.15} ${tx},${ty}`;
-        });
-        allL.select("text").attr("x", d => (d.source.x + d.target.x) / 2 - (d.target.y - d.source.y) * 0.08)
-          .attr("y", d => (d.source.y + d.target.y) / 2 + (d.target.x - d.source.x) * 0.08 - 4);
-        allN.attr("transform", d => `translate(${d.x},${d.y})`);
-      })
-;
-    // settle the layout before first paint so the view can be fitted immediately
-    if (!nodes.some(n => n.x !== undefined && old.has(n.id))) { sim.stop(); for (let i = 0; i < 300; i++) sim.tick(); sim.alpha(0.05).restart(); }
-    sim.on("tick")();
+    const out = new Map(ids.map(i => [i, []])), inc = new Map(ids.map(i => [i, []]));
+    fl.forEach(f => { out.get(f.from).push(f.to); inc.get(f.to).push(f.from); });
+    // layers: longest path from sources, cycle-safe (DFS marks back edges)
+    const layer = new Map(), state = new Map(), back = new Set();
+    const visit = v => {
+      state.set(v, 1);
+      for (const w of out.get(v)) {
+        if (state.get(w) === 1) { back.add(v + ">" + w); continue; }
+        if (!state.get(w)) visit(w);
+      }
+      state.set(v, 2);
+    };
+    ids.filter(i => !inc.get(i).length).concat(ids).forEach(i => { if (!state.get(i)) visit(i); });
+    const order = []; const seen = new Set();
+    const topo = v => { if (seen.has(v)) return; seen.add(v); inc.get(v).forEach(u => { if (!back.has(u + ">" + v)) topo(u); }); order.push(v); };
+    ids.forEach(topo);
+    order.forEach(v => layer.set(v, Math.max(0, ...inc.get(v).filter(u => !back.has(u + ">" + v)).map(u => (layer.get(u) ?? -1) + 1))));
+    const cols = []; ids.forEach(i => { const l = layer.get(i); (cols[l] = cols[l] || []).push(i); });
+    // crossing reduction: barycenter sweeps
+    const pos = new Map(); cols.forEach(c => c.forEach((v, i) => pos.set(v, i)));
+    for (let it = 0; it < 6; it++) {
+      const sweep = (c, nb) => { c.sort((a, b) => bary(a, nb) - bary(b, nb)); c.forEach((v, i) => pos.set(v, i)); };
+      const bary = (v, nb) => { const n = nb(v); return n.length ? n.reduce((s, u) => s + pos.get(u), 0) / n.length : pos.get(v); };
+      for (let l = 1; l < cols.length; l++) sweep(cols[l], v => inc.get(v));
+      for (let l = cols.length - 2; l >= 0; l--) sweep(cols[l], v => out.get(v));
+    }
+    // --- geometry ---
+    const label = v => { const e = eng.endpoint(v); return [...(e ? e.methods : [])].join("·") + " " + short(v); };
+    const meas = gv.append("text").style("font", "12px var(--mono)");
+    const W = new Map(ids.map(v => { meas.text(label(v)); return [v, meas.node().getComputedTextLength() + 22]; }));
+    meas.remove();
+    const colW = cols.map(c => Math.max(...c.map(v => W.get(v))));
+    const GAP = 120, RH = 62;
+    const xs = []; let x = 0; colW.forEach((w, i) => { xs[i] = x; x += w + GAP; });
+    const maxRows = Math.max(...cols.map(c => c.length));
+    const P = new Map();
+    cols.forEach((c, l) => c.forEach((v, i) => P.set(v, { x: xs[l], y: (i - (c.length - 1) / 2) * RH, w: W.get(v) })));
+    // --- focus set: full upstream + downstream chain of the selected node ---
+    const chain = new Set();
+    if (selEp && P.has(selEp)) {
+      const up = v => { if (chain.has("u" + v)) return; chain.add("u" + v); chain.add(v); inc.get(v).forEach(up); };
+      const dn = v => { if (chain.has("d" + v)) return; chain.add("d" + v); chain.add(v); out.get(v).forEach(dn); };
+      up(selEp); dn(selEp);
+    }
+    const inChain = v => !selEp || !P.has(selEp) || chain.has(v);
+    const showLabels = fl.length <= 14;
+    // --- edges ---
+    const eg = gv.append("g");
+    const edges = fl.map(f => ({ f, a: P.get(f.from), b: P.get(f.to), back: back.has(f.from + ">" + f.to) }));
+    // spread ports so parallel edges don't stack
+    const portOut = new Map(), portIn = new Map();
+    edges.forEach(e => { (portOut.get(e.f.from) || portOut.set(e.f.from, []).get(e.f.from)).push(e); (portIn.get(e.f.to) || portIn.set(e.f.to, []).get(e.f.to)).push(e); });
+    const off = (arr, e) => { const n = arr.length, i = arr.indexOf(e); return n > 1 ? (i - (n - 1) / 2) * Math.min(5, 14 / n) : 0; };
+    portOut.forEach(a => a.sort((p, q) => p.b.y - q.b.y)); portIn.forEach(a => a.sort((p, q) => p.a.y - q.a.y));
+    edges.forEach(e => {
+      const x1 = e.a.x + e.a.w, y1 = e.a.y + off(portOut.get(e.f.from), e), x2 = e.b.x, y2 = e.b.y + off(portIn.get(e.f.to), e);
+      e.d = e.back
+        ? `M${x1},${y1} C${x1 + 60},${y1} ${x1 + 60},${Math.max(y1, y2) + RH} ${(x1 + x2) / 2},${Math.max(y1, y2) + RH} S${x2 - 60},${y2} ${x2},${y2}`
+        : `M${x1},${y1} C${x1 + GAP * 0.55},${y1} ${x2 - GAP * 0.55},${y2} ${x2},${y2}`;
+      e.mx = (x1 + x2) / 2; e.my = (y1 + y2) / 2;
+      e.on = inChain(e.f.from) && inChain(e.f.to);
+    });
+    eg.selectAll("path").data(edges).join("path").attr("class", "gedge").attr("d", e => e.d).attr("marker-end", "url(#arr)")
+      .style("opacity", e => e.on ? 0.9 : 0.12).style("stroke-dasharray", e => e.back ? "5 4" : null)
+      .append("title").text(e => `${e.f.field} ×${e.f.count}\n${short(e.f.from)} → ${short(e.f.to)}`);
+    // labels as pills, only when readable
+    const lab = gv.append("g").selectAll("g").data(edges.filter(e => (showLabels && e.on) || (selEp && (e.f.from === selEp || e.f.to === selEp)))).join("g")
+      .attr("transform", e => `translate(${e.mx},${e.my})`);
+    lab.append("rect").attr("rx", 4).attr("fill", "var(--bg)").attr("stroke", "var(--flow)").attr("stroke-opacity", 0.5);
+    lab.append("text").attr("class", "gedge-l").attr("text-anchor", "middle").attr("dy", "0.32em").text(e => e.f.field + (e.f.count > 1 ? " ×" + e.f.count : ""));
+    lab.each(function () { const t = this.querySelector("text").getBBox(); d3.select(this).select("rect").attr("x", t.x - 5).attr("y", t.y - 2).attr("width", t.width + 10).attr("height", t.height + 4); });
+    // --- nodes ---
+    const ng = gv.append("g").selectAll("g").data(ids).join("g").attr("class", "node gnode")
+      .attr("transform", v => `translate(${P.get(v).x},${P.get(v).y})`)
+      .classed("sel", v => v === selEp).classed("dim", v => !inChain(v))
+      .on("click", (ev, v) => { ev.stopPropagation(); selEp = selEp === v ? null : v; if (selEp) showEp(v); renderFlowGraph(ff); });
+    ng.append("rect").attr("class", "box").attr("x", 0).attr("y", -11).attr("height", 22).attr("width", v => W.get(v)).attr("stroke", v => col((eng.endpoint(v) || {}).score || 0));
+    ng.append("text").attr("x", 9).attr("dy", "0.32em").text(label);
+    // column headers
+    gv.append("g").selectAll("text").data(cols).join("text").attr("x", (c, i) => xs[i]).attr("y", -(maxRows / 2) * RH - 18)
+      .attr("fill", "var(--mute)").style("font", "11px var(--sans)").text((c, i) => i === 0 ? "источники ID" : "шаг " + (i + 1));
     if (firstFit) { firstFit = false; fit(); }
-    markFlow();
   }
-  function markFlow() { gv.selectAll("g.gnode").classed("sel", d => d.id === selEp); }
+  function markFlow() { schedule(true); }
 
   // ---------- view: pages ----------
   function renderPages(ff) {
