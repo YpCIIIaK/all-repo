@@ -149,7 +149,8 @@
     reset() {
       this.records = []; this.eps = new Map(); this.produced = new Map(); this.flows = new Map();
       this.findings = []; this.staticSeen = new Set(); this.tech = new Map(); this.jwts = new Map(); this.version = 0;
-      this.prefixes = new Map();   // host -> Map(prefix -> votes): learned API base, e.g. "api/v1"
+      this.prefixes = new Map();
+      this.pages = new Map();      // pageKey -> {key, host, path, url, eps: Map(epKey -> count), count}   // host -> Map(prefix -> votes): learned API base, e.g. "api/v1"
     }
     key(host, path) { return host + "/" + path; }
     static suffixMatch(stat, real) {
@@ -157,7 +158,8 @@
       if (!a.length || a.length > b.length) return false;
       for (let i = 1; i <= a.length; i++) {
         const x = a[a.length - i], y = b[b.length - i];
-        if (!(x === y || x[0] === "{" || y[0] === "{")) return false;
+        // static placeholder matches anything; a real-path placeholder ({id}) only matches a static placeholder
+        if (!(x === y || x[0] === "{")) return false;
       }
       return true;
     }
@@ -249,6 +251,15 @@
       const ep = this.ensureEp(u.host, path, true);
       if (fresh) this.absorbStatic(ep);
       rec.ep = ep.key; rec.path = path; rec.host = u.host;
+      if (rec.page) {
+        const pu = parseUrl(rec.page);
+        if (pu) {
+          const pk = pu.host + "/" + (normPath(pu.pathname) || "");
+          let pg = this.pages.get(pk);
+          if (!pg) { pg = { key: pk, host: pu.host, path: "/" + normPath(pu.pathname), url: rec.page, eps: new Map(), count: 0 }; this.pages.set(pk, pg); }
+          pg.count++; pg.eps.set(ep.key, (pg.eps.get(ep.key) || 0) + 1); rec.pageKey = pk;
+        }
+      }
       this.records.push(rec); ep.recs.push(rec.id); ep.count++; ep.methods.add(rec.method);
       ep.status[rec.status] = (ep.status[rec.status] || 0) + 1; ep.mime.add(mime.split(";")[0]);
       const rh = hdrMap(rec.reqHeaders), sh = hdrMap(rec.resHeaders);
@@ -379,6 +390,7 @@
       resHeaders: e.response.headers || [], mime: (e.response.content || {}).mimeType || "",
       resBody: (e.response.content || {}).encoding === "base64" ? "" : ((e.response.content || {}).text || ""),
       initiator: e._initiator || null, time: e.time || 0,
+      page: ((e.request.headers || []).find(h => /^referer$/i.test(h.name)) || {}).value || null,
     }));
   };
   Engine.siteOf = siteOf; Engine.decodeJwt = decodeJwt; Engine.mask = mask;

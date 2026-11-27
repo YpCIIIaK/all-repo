@@ -13,6 +13,7 @@
   <span class="stat" id="st-req">0 запросов</span>
   <span class="stat hot" id="st-find">0 находок</span>
   <span class="stat" id="st-flow">0 потоков</span>
+  <div class="seg" id="view"><button data-v="tree" class="on">дерево</button><button data-v="flows">потоки</button><button data-v="pages">страницы</button></div>
   <input id="q" placeholder="поиск: путь, поле, находка…">
   <select id="scope" title="Какие хосты показывать"><option value="site">только этот сайт</option><option value="all">все хосты</option></select>
   <select id="minsc"><option value="0">все</option><option value="3">риск ≥ 3</option><option value="5">риск ≥ 5</option><option value="8">риск ≥ 8</option></select>
@@ -39,12 +40,22 @@
       <button data-t="find">Находки</button>
       <button data-t="flow">Потоки</button>
       <button data-t="tech">Стек</button>
+      <button data-t="set" title="Настройки">⚙</button>
     </nav>
     <div class="pane on" id="p-rank"></div>
     <div class="pane" id="p-det"><div class="empty">Выберите узел на карте, строку в ленте или в рейтинге.</div></div>
     <div class="pane" id="p-find"></div>
     <div class="pane" id="p-flow"></div>
     <div class="pane" id="p-tech"></div>
+    <div class="pane" id="p-set">
+      <h3>Повтор запросов: разрешённые домены</h3>
+      <div class="sub">Повтор работает только для этих доменов и их поддоменов. По одному на строку. Пусто — повтор выключен.</div>
+      <textarea id="set-allow" rows="5" placeholder="example.com"></textarea>
+      <h3>Заголовки, добавляемые к каждому повтору</h3>
+      <div class="sub">Например, идентификатор исследователя. Формат: <code>Имя: значение</code>.</div>
+      <textarea id="set-hdr" rows="3" placeholder="X-Bug-Bounty: nickname"></textarea>
+      <div style="margin-top:10px"><button id="set-save">сохранить</button> <span class="sub" id="set-ok"></span></div>
+    </div>
   </aside>
   <section id="timeline">
     <div class="tl-head"><span>Лента запросов</span><label><input type="checkbox" id="tl-follow" checked> следить</label><label><input type="checkbox" id="tl-onlyapi" checked> только API</label></div>

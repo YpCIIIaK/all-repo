@@ -13,6 +13,9 @@
   };
 
   let eng = new Engine(), site = null, recording = true, selEp = null, selRec = null, reveal = false, recSeq = 0;
+  let view = "tree", currentPage = null, selPage = null;
+  let settings = { allow: [], hdr: "" };
+  const replayPending = [];   // {method, url, t} — чтобы повторы не загрязняли модель
   const collapsed = new Set();
   const recById = new Map();
 
@@ -30,11 +33,16 @@
   }
   if (hasDT) {
     chrome.devtools.inspectedWindow.eval("location.hostname", h => { if (h) setSite(h); });
-    chrome.devtools.network.onNavigated.addListener(url => { try { setSite(new URL(url).hostname); } catch (e) { } });
+    chrome.devtools.network.onNavigated.addListener(url => { currentPage = url; try { setSite(new URL(url).hostname); } catch (e) { } });
+    const pollPage = () => chrome.devtools.inspectedWindow.eval("location.href", h => { if (h) currentPage = h; });
+    pollPage(); setInterval(pollPage, 1000);
     chrome.devtools.network.onRequestFinished.addListener(req => {
       if (!recording) return;
+      const ri = replayPending.findIndex(x => x.method === req.request.method && x.url === req.request.url && Date.now() - x.t < 30000);
+      if (ri >= 0) { replayPending.splice(ri, 1); return; }
+      const page = currentPage;
       req.getContent((body, enc) => {
-        add({
+        add({ page,
           t: Date.now(), method: req.request.method, url: req.request.url, status: req.response.status,
           reqHeaders: req.request.headers, reqBody: (req.request.postData || {}).text || "", reqMime: (req.request.postData || {}).mimeType || "",
           resHeaders: req.response.headers, mime: (req.response.content || {}).mimeType || "",
@@ -63,6 +71,15 @@
     }, 2500);
   }
 
+  // ---------- settings ----------
+  store.get("apimap:settings").then(v => { if (v) settings = v; $("set-allow").value = (settings.allow || []).join("\n"); $("set-hdr").value = settings.hdr || ""; });
+  $("set-save").onclick = () => {
+    settings = { allow: $("set-allow").value.split(/\s+/).map(x => x.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "")).filter(Boolean), hdr: $("set-hdr").value };
+    store.set("apimap:settings", settings); $("set-ok").textContent = "сохранено";
+    setTimeout(() => $("set-ok").textContent = "", 1500);
+  };
+  const allowed = host => (settings.allow || []).some(d => host === d || host.endsWith("." + d));
+
   // ---------- header controls ----------
   $("rec").onclick = () => { recording = !recording; $("rec").classList.toggle("off", !recording); $("rec-t").textContent = recording ? "запись" : "пауза"; };
   $("b-clear").onclick = () => { if (!confirm("Очистить данные " + (site || "") + "?")) return; eng = new Engine(); recById.clear(); $("tl").innerHTML = ""; collapsed.clear(); selEp = selRec = null; if (site) store.del("apimap:" + site); schedule(true); };
@@ -85,6 +102,10 @@
   $("b-exp").onclick = () => { collapsed.clear(); schedule(true); };
   $("b-col").onclick = () => { lastRoot && lastRoot.descendants().forEach(d => { if (d.depth >= 2 && (d.children || d._children)) collapsed.add(d.id); }); schedule(true); };
   $("b-fit").onclick = () => fit();
+  document.querySelectorAll("#view button").forEach(b => b.onclick = () => {
+    view = b.dataset.v; document.querySelectorAll("#view button").forEach(x => x.classList.toggle("on", x === b));
+    firstFit = true; schedule(true);
+  });
   document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => tab(b.dataset.t));
   function tab(t) {
     document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.t === t));
@@ -93,7 +114,9 @@
 
   // ---------- map ----------
   const svg = d3.select("#svg"), g = svg.append("g");
-  const gl = g.append("g"), gf = g.append("g"), gn = g.append("g");
+  const gl = g.append("g"), gf = g.append("g"), gn = g.append("g"), gv = g.append("g");
+  svg.append("defs").html('<marker id="arr" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="var(--flow)"/></marker>');
+  let sim = null;
   const zoom = d3.zoom().scaleExtent([0.08, 3]).on("zoom", ev => g.attr("transform", ev.transform));
   svg.call(zoom).on("dblclick.zoom", null);
   svg.on("click", ev => { if (ev.target === svg.node()) { selEp = null; highlight(); } });
@@ -127,6 +150,13 @@
     $("st-find").textContent = eng.findings.length + " находок";
     $("st-flow").textContent = eng.flows.size + " потоков";
     $("empty-map").style.display = eng.eps.size ? "none" : "flex";
+    rank(list.filter(ff)); findings(); flows(); tech();
+    [gl, gf, gn].forEach(x => x.style("display", view === "tree" ? null : "none"));
+    gv.style("display", view === "tree" ? "none" : null);
+    if (view === "flows") return renderFlowGraph(ff);
+    if (view === "pages") return renderPages(ff);
+    if (sim) { sim.stop(); sim = null; }
+    gv.selectAll("*").remove();
 
     const data = eng.tree(ff);
     const root = d3.hierarchy(data);
@@ -182,9 +212,117 @@
       .each(function (x) { d3.select(this).selectAll("title").data([x]).join("title").text(`${x.f.field} ×${x.f.count}\n${x.f.from}\n→ ${x.f.to}`); });
 
     highlight();
-    rank(list.filter(ff)); findings(); flows(); tech();
     if (firstFit && nodes.length) { firstFit = false; fit(); }
   }
+  // ---------- view: flow graph ----------
+  function short(k) { return k.split("/").slice(1).join("/"); }
+  function renderFlowGraph(ff) {
+    const fl = eng.flowList().filter(f => { const a = eng.endpoint(f.from), b = eng.endpoint(f.to); return a && b && ff(a) && ff(b); });
+    if (!fl.length) {
+      if (sim) { sim.stop(); sim = null; }
+      gv.selectAll("*").remove();
+      gv.append("text").attr("x", 0).attr("y", 0).attr("fill", "var(--mute)").style("font", "14px var(--sans)")
+        .text("Потоков ID пока нет: пройдите цепочку «список → объект → действие» (с Disable cache).");
+      if (firstFit) { firstFit = false; fit(); }
+      return;
+    }
+    const ids = [...new Set(fl.flatMap(f => [f.from, f.to]))];
+    const old = new Map((sim ? sim.nodes() : []).map(n => [n.id, n]));
+    const nodes = ids.map(id => old.get(id) || { id });
+    const links = fl.map(f => ({ source: f.from, target: f.to, f }));
+    gv.selectAll(":scope > text").remove();
+    const le = gv.selectAll("g.ge").data(links, d => d.f.from + ">" + d.f.to + d.f.field);
+    const lee = le.enter().append("g").attr("class", "ge");
+    lee.append("path").attr("class", "gedge").attr("marker-end", "url(#arr)");
+    lee.append("text").attr("class", "gedge-l").attr("text-anchor", "middle");
+    le.exit().remove();
+    const ne = gv.selectAll("g.gnode").data(nodes, d => d.id);
+    const nee = ne.enter().append("g").attr("class", "gnode")
+      .call(d3.drag().on("start", (ev, d) => { if (!ev.active) sim.alphaTarget(0.2).restart(); d.fx = d.x; d.fy = d.y; })
+        .on("drag", (ev, d) => { d.fx = ev.x; d.fy = ev.y; }).on("end", (ev, d) => { if (!ev.active) sim.alphaTarget(0); }))
+      .on("click", (ev, d) => { ev.stopPropagation(); selEp = d.id; showEp(d.id); markFlow(); });
+    nee.append("rect").attr("class", "hit").attr("x", -12).attr("y", -12).attr("height", 24).attr("fill", "transparent");
+    nee.append("circle").attr("r", 9);
+    nee.append("text").attr("x", 13).attr("dy", "0.32em");
+    ne.exit().remove();
+    const allN = nee.merge(ne), allL = lee.merge(le);
+    allN.select("circle").attr("stroke", d => col((eng.endpoint(d.id) || {}).score || 0));
+    allN.select("text").text(d => { const e = eng.endpoint(d.id); return [...(e ? e.methods : [])].join("·") + " " + short(d.id); });
+    allL.select("text").text(d => d.f.field + (d.f.count > 1 ? " ×" + d.f.count : ""));
+    allN.each(function () { d3.select(this).select("rect.hit").attr("width", this.querySelector("text").getComputedTextLength() + 30); });
+    if (sim) sim.stop();
+    sim = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink(links).id(d => d.id).distance(230).strength(0.6))
+      .force("charge", d3.forceManyBody().strength(-900))
+      .force("x", d3.forceX().strength(0.04)).force("y", d3.forceY().strength(0.06))
+      .force("collide", d3.forceCollide(70))
+      .on("tick", () => {
+        allL.select("path").attr("d", d => {
+          const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y, L = Math.hypot(dx, dy) || 1;
+          const tx = d.target.x - dx / L * 11, ty = d.target.y - dy / L * 11;
+          return `M${d.source.x},${d.source.y} Q${(d.source.x + tx) / 2 - dy * 0.15},${(d.source.y + ty) / 2 + dx * 0.15} ${tx},${ty}`;
+        });
+        allL.select("text").attr("x", d => (d.source.x + d.target.x) / 2 - (d.target.y - d.source.y) * 0.08)
+          .attr("y", d => (d.source.y + d.target.y) / 2 + (d.target.x - d.source.x) * 0.08 - 4);
+        allN.attr("transform", d => `translate(${d.x},${d.y})`);
+      })
+;
+    // settle the layout before first paint so the view can be fitted immediately
+    if (!nodes.some(n => n.x !== undefined && old.has(n.id))) { sim.stop(); for (let i = 0; i < 300; i++) sim.tick(); sim.alpha(0.05).restart(); }
+    sim.on("tick")();
+    if (firstFit) { firstFit = false; fit(); }
+    markFlow();
+  }
+  function markFlow() { gv.selectAll("g.gnode").classed("sel", d => d.id === selEp); }
+
+  // ---------- view: pages ----------
+  function renderPages(ff) {
+    if (sim) { sim.stop(); sim = null; }
+    gv.selectAll("*").remove();
+    const pages = [...eng.pages.values()].filter(p => !site || Engine.siteOf(p.host) === site || $("scope").value === "all")
+      .sort((a, b) => b.count - a.count);
+    if (!pages.length) {
+      gv.append("text").attr("fill", "var(--mute)").style("font", "14px var(--sans)")
+        .text("Нет данных о страницах: запросы появятся здесь, когда вы будете ходить по сайту с открытой панелью.");
+      if (firstFit) { firstFit = false; fit(); } return;
+    }
+    const epSet = new Map();
+    pages.forEach(p => p.eps.forEach((n, k) => { const e = eng.endpoint(k); if (e && ff(e)) epSet.set(k, e); }));
+    const eps = [...epSet.values()].sort((a, b) => a.path.localeCompare(b.path));
+    const RH = 24, PX = 0, EX = 560;
+    const py = new Map(), ey = new Map();
+    const totalP = pages.length * RH * 2, totalE = eps.length * RH;
+    const off = (totalE - totalP) / 2;
+    pages.forEach((p, i) => py.set(p.key, off + i * RH * 2));
+    eps.forEach((e, i) => ey.set(e.key, i * RH));
+    const links = [];
+    pages.forEach(p => p.eps.forEach((n, k) => { if (ey.has(k)) links.push({ p: p.key, e: k, n }); }));
+    gv.append("g").selectAll("path").data(links).join("path").attr("class", "pg-link")
+      .classed("hl", d => d.p === selPage || d.e === selEp)
+      .attr("stroke-width", d => Math.min(4, 1 + Math.log2(d.n)))
+      .attr("d", d => `M${PX + 330},${py.get(d.p)} C${(PX + 330 + EX) / 2},${py.get(d.p)} ${(PX + 330 + EX) / 2},${ey.get(d.e)} ${EX},${ey.get(d.e)}`);
+    const pg = gv.append("g").selectAll("g").data(pages).join("g").attr("class", "pg-page node").attr("transform", p => `translate(${PX},${py.get(p.key)})`)
+      .on("click", (ev, p) => { ev.stopPropagation(); selPage = selPage === p.key ? null : p.key; showPage(p.key); renderPages(ff); });
+    pg.append("rect").attr("x", 0).attr("y", -13).attr("width", 330).attr("height", 26).attr("stroke-width", p => p.key === selPage ? 2.5 : 1.2);
+    pg.append("text").attr("x", 10).attr("dy", "0.32em").style("font", "12px var(--mono)").attr("fill", "var(--text)")
+      .text(p => (p.path.length > 34 ? "…" + p.path.slice(-33) : p.path) + "  ×" + p.count);
+    const en = gv.append("g").selectAll("g").data(eps).join("g").attr("class", "node").attr("transform", e => `translate(${EX},${ey.get(e.key)})`)
+      .classed("dim", e => selPage && !eng.pages.get(selPage).eps.has(e.key))
+      .on("click", (ev, e) => { ev.stopPropagation(); selEp = e.key; showEp(e.key); renderPages(ff); });
+    en.append("rect").attr("class", "box").attr("x", 0).attr("y", -10).attr("height", 20).attr("stroke", e => col(e.score || 0));
+    en.append("text").attr("x", 8).attr("dy", "0.32em").text(e => [...e.methods].join("·") + " " + e.path);
+    en.each(function () { const w = this.querySelector("text").getComputedTextLength() + 16; d3.select(this).select("rect").attr("width", w); });
+    if (firstFit) { firstFit = false; fit(); }
+  }
+  function showPage(k) {
+    const p = eng.pages.get(k); if (!p) return; tab("det");
+    const rows = [...p.eps.entries()].map(([ek, n]) => [eng.endpoint(ek), n]).filter(x => x[0]).sort((a, b) => (b[0].score || 0) - (a[0].score || 0));
+    $("p-det").innerHTML = `<div class="path">${esc(p.path)}</div><div class="sub">${esc(p.host)} · запросов ×${p.count}</div>
+      <h3>Какие API вызывает эта страница</h3>${rows.map(([e, n]) => `<div class="row" data-k="${esc(e.key)}"><div class="sc" style="background:${col(e.score || 0)}">${e.score || 0}</div>
+        <div><div class="path" style="font-size:12px">${[...e.methods].map(m => `<span class="m-${m}">${m}</span>`).join(" ")} ${esc(e.path)}</div><div class="sub">×${n}${e.findings.length ? " · ⚑ " + esc(e.findings[0].text) : ""}</div></div></div>`).join("")}`;
+    $("p-det").querySelectorAll(".row").forEach(r => r.onclick = () => { selEp = r.dataset.k; showEp(r.dataset.k); });
+  }
+
   function toggle(d) { if (!d._children) return; if (collapsed.has(d.id)) collapsed.delete(d.id); else collapsed.add(d.id); schedule(true); }
   function fit() {
     const b = g.node().getBBox(), W = svg.node().clientWidth, H = svg.node().clientHeight;
@@ -205,6 +343,7 @@
     gf.selectAll("path").classed("hl", x => selEp && (x.f.from === selEp || x.f.to === selEp));
   }
   function focusEp(k) {
+    if (view !== "tree") { schedule(true); return; }
     if (!lastRoot) return;
     // expand ancestors if collapsed
     const parts = k.split("/"); let id = "root";
@@ -308,7 +447,8 @@
       <div class="path"><span class="m-${esc(r.method)}">${esc(r.method)}</span> ${esc(r.url)}</div>
       <div style="margin-top:6px"><span class="badge s${String(r.status)[0]}">${r.status}</span><span class="badge">${esc(r.mime || "")}</span>
         ${ep ? `<span class="badge go" data-go="${esc(ep.key)}">эндпоинт: ${esc(ep.path)}</span>` : ""}</div>
-      <div class="subtabs"><button id="rv">${reveal ? "скрыть секреты" : "показать секреты"}</button></div>
+      <div class="subtabs"><button id="rv">${reveal ? "скрыть секреты" : "показать секреты"}</button><button id="rp">↻ повторить с правкой</button></div>
+      <div id="replay"></div>
       ${init ? `<h3>Кто вызвал (стек)</h3><pre>${esc(init.map(f => `${f.functionName || "(anon)"}  ${f.url.split("/").pop()}:${f.lineNumber + 1}`).join("\n"))}</pre>` : ""}
       <h3>Заголовки запроса</h3>${hdrs(r.reqHeaders)}
       ${r.reqBody ? `<h3>Тело запроса</h3><pre>${esc(pretty(r.reqBody))}</pre>` : ""}
@@ -316,7 +456,83 @@
       <h3>Заголовки ответа</h3>${hdrs(r.resHeaders)}
       <h3>Ответ</h3><pre>${esc(pretty(r.resBody, r.mime))}</pre>`;
     $("rv").onclick = () => { reveal = !reveal; showRec(id); };
+    $("rp").onclick = () => openReplay(r);
     $("p-det").querySelectorAll("[data-go]").forEach(b => b.onclick = () => { selEp = b.dataset.go; showEp(b.dataset.go); focusEp(b.dataset.go); highlight(); });
+  }
+
+  // ---------- replay ----------
+  const SKIP_H = /^(:|cookie$|host$|content-length$|connection$|accept-encoding$|sec-|origin$|referer$|user-agent$|priority$|te$)/i;
+  const ORIG = "‹оригинал›";
+  function openReplay(r) {
+    const host = (() => { try { return new URL(r.url).hostname; } catch (e) { return ""; } })();
+    const box = $("replay");
+    if (!hasDT) { box.innerHTML = `<div class="find low"><div class="t">Повтор доступен только во вкладке DevTools.</div></div>`; return; }
+    if (!allowed(host)) {
+      box.innerHTML = `<div class="find med"><div class="t">Домен <b>${esc(host)}</b> не в списке разрешённых.</div><div class="e">Добавьте его во вкладке ⚙, если у вас есть право тестировать этот сайт.</div></div>`; return;
+    }
+    const hl = (r.reqHeaders || []).filter(h => !SKIP_H.test(h.name)).map(h => h.name + ": " + (/^(authorization|x-api-key|x-auth-token|x-access-token)$/i.test(h.name) ? ORIG : h.value));
+    box.innerHTML = `<h3>Повтор запроса</h3>
+      <div class="ed"><label>Метод</label><select id="rp-m">${["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"].map(m => `<option ${m === r.method ? "selected" : ""}>${m}</option>`).join("")}</select>
+      <label>URL</label><input id="rp-u" value="${esc(r.url)}">
+      <label>Куки</label><label class="sub"><input type="checkbox" id="rp-c" checked> отправлять куки сайта (снимите, чтобы проверить доступ без сессии)</label></div>
+      <h3>Заголовки</h3><div class="sub"><code>${ORIG}</code> — подставится исходное значение. Удалите строку, чтобы не отправлять заголовок.</div>
+      <textarea id="rp-h" rows="5">${esc(hl.join("\n"))}</textarea>
+      <h3>Тело</h3><textarea id="rp-b" rows="5">${esc(r.reqBody ? pretty(r.reqBody) : "")}</textarea>
+      <div style="margin-top:8px"><button id="rp-go">отправить</button> <span class="sub" id="rp-st"></span></div>
+      <div id="rp-out"></div>`;
+    $("rp-go").onclick = () => sendReplay(r);
+  }
+  function sendReplay(r) {
+    const method = $("rp-m").value, url = $("rp-u").value.trim();
+    let host; try { host = new URL(url).hostname; } catch (e) { $("rp-st").textContent = "неверный URL"; return; }
+    if (!allowed(host)) { $("rp-st").textContent = "домен не разрешён"; return; }
+    const origH = Object.fromEntries((r.reqHeaders || []).map(h => [h.name.toLowerCase(), h.value]));
+    const headers = {};
+    for (const line of ($("rp-h").value + "\n" + (settings.hdr || "")).split("\n")) {
+      const i = line.indexOf(":"); if (i <= 0) continue;
+      const k = line.slice(0, i).trim(), v = line.slice(i + 1).trim();
+      headers[k] = v === ORIG ? (origH[k.toLowerCase()] || "") : v;
+    }
+    const body = ["GET", "HEAD"].includes(method) ? null : $("rp-b").value;
+    const id = "x" + Date.now();
+    const opts = { method, headers, credentials: $("rp-c").checked ? "include" : "omit" };
+    if (body) opts.body = body;
+    replayPending.push({ method, url, t: Date.now() });
+    const code = `(function(){window.__apimap=window.__apimap||{};window.__apimap[${JSON.stringify(id)}]={pending:true};
+      fetch(${JSON.stringify(url)},${JSON.stringify(opts)}).then(async function(r){var t=await r.text();var h=[];r.headers.forEach(function(v,k){h.push({name:k,value:v})});
+      window.__apimap[${JSON.stringify(id)}]={status:r.status,headers:h,body:t.slice(0,300000),type:r.headers.get("content-type")||""}})
+      .catch(function(e){window.__apimap[${JSON.stringify(id)}]={error:String(e)}});return true})()`;
+    $("rp-st").textContent = "отправка…";
+    chrome.devtools.inspectedWindow.eval(code, () => {
+      const t0 = Date.now();
+      const poll = () => chrome.devtools.inspectedWindow.eval(`(function(){var x=window.__apimap&&window.__apimap[${JSON.stringify(id)}];if(x&&!x.pending){delete window.__apimap[${JSON.stringify(id)}]}return x})()`, res => {
+        if (res && !res.pending) return showReplay(r, res);
+        if (Date.now() - t0 > 30000) { $("rp-st").textContent = "нет ответа за 30 с"; return; }
+        setTimeout(poll, 300);
+      });
+      poll();
+    });
+  }
+  function jsonDiff(a, b) {
+    const fa = new Map(), fb = new Map();
+    const flat = (o, p, m) => { if (o && typeof o === "object") { for (const k of Object.keys(o)) flat(o[k], p ? p + "." + k : k, m); } else m.set(p, o); };
+    flat(a, "", fa); flat(b, "", fb);
+    const out = [];
+    for (const [k, v] of fb) if (!fa.has(k)) out.push(["add", k, v]); else if (JSON.stringify(fa.get(k)) !== JSON.stringify(v)) out.push(["chg", k, v]);
+    for (const k of fa.keys()) if (!fb.has(k)) out.push(["del", k]);
+    return out;
+  }
+  function showReplay(orig, res) {
+    if (res.error) { $("rp-st").textContent = "ошибка: " + res.error; return; }
+    $("rp-st").textContent = "";
+    const same = res.body === orig.resBody;
+    let ja = null, jb = null; try { ja = JSON.parse(orig.resBody); } catch (e) { } try { jb = JSON.parse(res.body); } catch (e) { }
+    const d = ja && jb ? jsonDiff(ja, jb) : null;
+    $("rp-out").innerHTML = `<h3>Результат</h3>
+      <div><span class="badge s${String(orig.status)[0]}">было ${orig.status}</span> → <span class="badge s${String(res.status)[0]}">стало ${res.status}</span>
+      <span class="badge">${(orig.resBody || "").length} → ${res.body.length} байт</span>${same ? '<span class="badge">ответ идентичен</span>' : ""}</div>
+      ${d ? `<h3>Отличия JSON (${d.length})</h3><pre>${esc(d.slice(0, 200).map(([t, k, v]) => (t === "add" ? "+ " : t === "del" ? "- " : "~ ") + k + (t === "del" ? "" : " = " + JSON.stringify(v))).join("\n") || "нет отличий")}</pre>` : ""}
+      <h3>Ответ</h3><pre>${esc(pretty(res.body))}</pre>`;
   }
 
   // standalone mode (opened as a page, not in DevTools): HAR import only

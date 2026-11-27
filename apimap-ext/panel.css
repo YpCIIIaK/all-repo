@@ -75,3 +75,21 @@ ul.why{margin:0;padding-left:18px}ul.why li{margin:3px 0}
 .kv div:nth-child(even){word-break:break-all}
 .subtabs{display:flex;gap:6px;margin:10px 0 4px}
 .subtabs button{font-size:11.5px;padding:3px 8px}
+
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;border-radius:0;background:var(--panel2);padding:5px 10px}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on{background:var(--accent);color:#0b0d12}
+textarea{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:7px;font:12px var(--mono);resize:vertical}
+.ed{display:grid;grid-template-columns:90px 1fr;gap:6px;margin-top:6px}
+.ed input,.ed select{font:12px var(--mono)}
+.diff-add{color:var(--ok)}.diff-del{color:var(--hot)}.diff-chg{color:var(--warn)}
+.gnode circle{stroke-width:2;fill:var(--panel)}
+.gnode text{font:11.5px var(--mono);fill:var(--text);pointer-events:none}
+.gnode{cursor:pointer}.gnode.sel circle{stroke-width:4}
+.gedge{stroke:var(--flow);stroke-width:1.6;fill:none;opacity:.8}
+.gedge-l{font:10.5px var(--mono);fill:var(--flow);pointer-events:none}
+.pg-page rect{fill:var(--panel2);stroke:var(--accent);rx:6}
+.pg-link{fill:none;stroke:var(--line);stroke-width:1.3}
+.pg-link.hl{stroke:var(--accent);stroke-width:2}
+code{font:11.5px var(--mono);background:var(--panel2);padding:1px 4px;border-radius:3px}
